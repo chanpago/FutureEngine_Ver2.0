@@ -1,0 +1,183 @@
+# Blender 4.5.3 LTS MTL File: 'None'
+# www.blender.org
+
+newmtl barrier_concrete.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/barrier_concrete_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/barrier_concrete_normal.png
+
+newmtl barrier_fence.001
+Ns 25.000004
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/barrier_fence_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/barrier_fence_normal.png
+
+newmtl barrier_tyre.001
+Ns 16.000006
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/barrier_tyre_baseColor.png
+
+newmtl barrier_tyre_2.001
+Ns 0.082621
+Ka 1.000000 1.000000 1.000000
+Kd 0.230132 0.011160 0.008033
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl brake_tablet.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/brake_tablet_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/brake_tablet_normal.png
+
+newmtl conus_clear.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/conus_clear_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/conus_clear_normal.png
+
+newmtl conus_dirt.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/conus_dirt_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/conus_dirt_normal.png
+
+newmtl fanatec_banner.001
+Ns 16.000006
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/fanatec_banner_baseColor.png
+
+newmtl lighting_mast.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/lighting_mast_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/lighting_mast_normal.png
+
+newmtl lights.001
+Ns 63.999992
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/lights_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/lights_normal.png
+
+newmtl lights_glass.001
+Ns 38.399990
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl pirreli_banner.001
+Ns 16.000006
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/pirreli_banner_baseColor.png
+
+newmtl post_clear.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/post_clear_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/post_clear_normal.png
+
+newmtl post_dirt.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/post_dirt_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/post_dirt_normal.png
+
+newmtl rolex_banner.001
+Ns 16.000006
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/rolex_banner_baseColor.png
+
+newmtl s_rail.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/s_rail_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/s_rail_normal.png
+
+newmtl speed_limit.001
+Ns 32.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/RaceTrack/speed_limit_baseColor.png
+map_Bump -bm 1.000000 Texture/RaceTrack/speed_limit_normal.png

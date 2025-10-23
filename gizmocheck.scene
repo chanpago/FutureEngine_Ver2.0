@@ -1,0 +1,62 @@
+{
+  "Actors" : {
+    "125" : {
+      "Components" : [{
+          "IsEditorOnly" : "false",
+          "IsVisualizationComponent" : "false",
+          "Location" : [1.739861, -0.344554, -0.425123],
+          "Name" : "UStaticMeshComponent_1",
+          "ObjStaticMeshAsset" : "Data/Shapes/Cube.obj",
+          "ParentName" : "",
+          "Rotation" : [0.000000, 0.000000, 28.549990],
+          "Scale" : [0.662557, 0.662557, 0.662557],
+          "Type" : "UStaticMeshComponent"
+        }, {
+          "IsEditorOnly" : "true",
+          "IsVisualizationComponent" : "false",
+          "Location" : [0.000000, 0.000000, 0.000000],
+          "Name" : "UUUIDTextComponent_3",
+          "ParentName" : "UStaticMeshComponent_1",
+          "Rotation" : [0.000000, 0.000000, 0.000000],
+          "Scale" : [1.000000, 1.000000, 1.000000],
+          "Type" : "UUUIDTextComponent"
+        }],
+      "Location" : [1.739861, -0.344554, -0.425123],
+      "Rotation" : [0.000000, 0.000000, 28.549990],
+      "Scale" : [0.662557, 0.662557, 0.662557],
+      "Type" : "ACubeActor",
+      "bCanEverTick" : "false",
+      "bTickInEditor" : "false"
+    }
+  },
+  "NextUUID" : 0,
+  "PerspectiveCamera" : [{
+      "FOV" : [90.000000],
+      "FarClip" : [1000.000000],
+      "Location" : [0.766105, -0.344554, -0.425123],
+      "NearClip" : [0.100000],
+      "Rotation" : [0.000000, 0.000000, 0.000000],
+      "ViewportCameraType" : 0
+    }, {
+      "FOV" : [90.000000],
+      "FarClip" : [1000.000000],
+      "Location" : [0.766105, -0.344554, -0.425123],
+      "NearClip" : [0.100000],
+      "Rotation" : [0.000000, 0.000000, 0.000000],
+      "ViewportCameraType" : 0
+    }, {
+      "FOV" : [90.000000],
+      "FarClip" : [1000.000000],
+      "Location" : [0.766105, -0.344554, -0.425123],
+      "NearClip" : [0.100000],
+      "Rotation" : [0.000000, 0.000000, 0.000000],
+      "ViewportCameraType" : 0
+    }, {
+      "FOV" : [90.000000],
+      "FarClip" : [1000.000000],
+      "Location" : [-1.967768, -0.354802, 1.899457],
+      "NearClip" : [0.100000],
+      "Rotation" : [0.000000, 13.500024, -2.849998],
+      "ViewportCameraType" : 0
+    }]
+}

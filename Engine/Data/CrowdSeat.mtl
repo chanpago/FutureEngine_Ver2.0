@@ -1,0 +1,57 @@
+# Blender 4.5.3 LTS MTL File: 'None'
+# www.blender.org
+
+newmtl Adverts
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/CrowdSeat/Adverts_baseColor.jpeg
+map_Bump -bm 1.000000 Texture/CrowdSeat/Adverts_normal.png
+
+newmtl Barriers_and_railings
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/CrowdSeat/Barriers_and_railings_baseColor.jpeg
+map_Bump -bm 1.000000 Texture/CrowdSeat/Barriers_and_railings_normal.png
+
+newmtl Seats_white
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/CrowdSeat/Seats_white_baseColor.jpeg
+map_Bump -bm 1.000000 Texture/CrowdSeat/Seats_white_normal.png
+
+newmtl lambert3
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/CrowdSeat/lambert3_baseColor.jpeg
+map_Bump -bm 1.000000 Texture/CrowdSeat/lambert3_normal.png
+
+newmtl stand_and_holders
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Texture/CrowdSeat/stand_and_holders_baseColor.jpeg
+map_Bump -bm 1.000000 Texture/CrowdSeat/stand_and_holders_normal.png
