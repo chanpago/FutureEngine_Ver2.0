@@ -61,7 +61,17 @@ void FRenderResourceFactory::CreateVertexShaderAndInputLayout(const wstring& InF
 	HRESULT Result = D3DCompileFromFile(InFilePath.data(), InMacros, D3D_COMPILE_STANDARD_FILE_INCLUDE, InEntryPoint, "vs_5_0", Flag, 0, &VertexShaderBlob, &ErrorBlob);
 	if (FAILED(Result))
 	{
-		if (ErrorBlob) { OutputDebugStringA(static_cast<char*>(ErrorBlob->GetBufferPointer())); SafeRelease(ErrorBlob); }
+		if (ErrorBlob)
+		{
+			const char* ErrorMsg = static_cast<char*>(ErrorBlob->GetBufferPointer());
+			OutputDebugStringA(ErrorMsg);
+			UE_LOG_ERROR("Vertex Shader Compilation Failed for entry '%s': %s", InEntryPoint, ErrorMsg);
+			SafeRelease(ErrorBlob);
+		}
+		else
+		{
+			UE_LOG_ERROR("Vertex Shader Compilation Failed for entry '%s': No error message available (HRESULT: 0x%X)", InEntryPoint, Result);
+		}
 		SafeRelease(VertexShaderBlob);
 		return;
 	}
@@ -141,7 +151,17 @@ void FRenderResourceFactory::CreatePixelShader(const wstring& InFilePath, ID3D11
 	HRESULT Result = D3DCompileFromFile(InFilePath.data(), InMacros, D3D_COMPILE_STANDARD_FILE_INCLUDE, InEntryPoint, "ps_5_0", Flag, 0, &PixelShaderBlob, &ErrorBlob);
 	if (FAILED(Result))
 	{
-		if (ErrorBlob) { OutputDebugStringA(static_cast<char*>(ErrorBlob->GetBufferPointer())); SafeRelease(ErrorBlob); }
+		if (ErrorBlob)
+		{
+			const char* ErrorMsg = static_cast<char*>(ErrorBlob->GetBufferPointer());
+			OutputDebugStringA(ErrorMsg);
+			UE_LOG_ERROR("Pixel Shader Compilation Failed for entry '%s': %s", InEntryPoint, ErrorMsg);
+			SafeRelease(ErrorBlob);
+		}
+		else
+		{
+			UE_LOG_ERROR("Pixel Shader Compilation Failed for entry '%s': No error message available (HRESULT: 0x%X)", InEntryPoint, Result);
+		}
 		SafeRelease(PixelShaderBlob);
 		return;
 	}

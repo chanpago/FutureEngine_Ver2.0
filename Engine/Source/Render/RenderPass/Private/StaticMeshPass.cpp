@@ -1,15 +1,17 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "Render/RenderPass/Public/StaticMeshPass.h"
 #include "Component/Mesh/Public/StaticMeshComponent.h"
 #include "Render/Renderer/Public/Pipeline.h"
 #include "Render/Renderer/Public/RenderResourceFactory.h"
 #include "Texture/Public/Texture.h"
+#include "Render/RenderPass/Public/UpdateLightBufferPass.h"
 
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
 	: FRenderPass(InPipeline, InConstantBufferCamera, InConstantBufferModel), VS(InVS), PS(InPS), InputLayout(InLayout), DS(InDS)
 {
 	ConstantBufferMaterial = FRenderResourceFactory::CreateConstantBuffer<FMaterialConstants>();
+	//ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
 }
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
@@ -38,6 +40,23 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
 	Pipeline->SetConstantBuffer(1, EShaderType::PS, ConstantBufferCamera);
+
+	// Shadow Map 상수 버퍼 및 SRV 바인딩 (b6, t10 슬롯)
+	//FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
+	//if (UpdateLightBufferPass)
+	//{
+	//	ID3D11ShaderResourceView* ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+	//	if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
+	//	{
+	//		FShadowMapConstants ShadowMapConsts;
+	//		ShadowMapConsts.LightViewMatrix = UpdateLightBufferPass->GetLightViewMatrix();
+	//		ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
+	//		ShadowMapConsts.ShadowBias = 0.005f;  // Shadow acne 방지용 bias
+	//		FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
+	//		Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
+	//		Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+	//	}
+	//}
 	
 	if (!(Context.ShowFlags & EEngineShowFlags::SF_StaticMesh)) { return; }
 	TArray<UStaticMeshComponent*>& MeshComponents = Context.StaticMeshes;
@@ -177,4 +196,5 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 void FStaticMeshPass::Release()
 {
 	SafeRelease(ConstantBufferMaterial);
+	//SafeRelease(ConstantBufferShadowMap);
 }

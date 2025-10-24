@@ -58,6 +58,7 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
     // BakeShadowMap(Context);
 }
 
+/*  // BakeShadowMap 전체 주석 처리
 void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 {
     // TODO: Shadow Map 리소스가 준비되면 여기서 베이킹 수행
@@ -254,7 +255,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 
         PointLightIndex++;
     }
-    */
+    
 
     // Viewport 복원
     DeviceContext->RSSetViewports(1, &OriginalViewport);
@@ -269,6 +270,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     }
     if (OriginalDSV) OriginalDSV->Release();
 }
+*/  // BakeShadowMap 주석 끝
 
 void FUpdateLightBufferPass::RenderPrimitive(UStaticMeshComponent* MeshComp)
 {

@@ -168,3 +168,11 @@ struct FGlobalLightConstant
 	FAmbientLightInfo Ambient;
 	FDirectionalLightInfo Directional;
 };
+
+struct FShadowMapConstants
+{
+	FMatrix LightViewMatrix;
+	FMatrix LightProjectionMatrix;
+	float ShadowBias;
+	FVector Padding;
+};
