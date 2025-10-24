@@ -34,8 +34,9 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	FPipelineInfo PipelineInfo = { InputLayout, VS, RS, DS, PS, nullptr, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST };
 	Pipeline->UpdatePipeline(PipelineInfo);
 
-	// Set a default sampler to slot 0 to ensure one is always bound
-	Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    // Set default samplers: s0 and s1 (linear clamp)
+    Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
 
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
@@ -45,7 +46,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
 	if (UpdateLightBufferPass)
 	{
-		ID3D11ShaderResourceView* ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+		ID3D11ShaderResourceView* ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV();
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{
 			FShadowMapConstants ShadowMapConsts;

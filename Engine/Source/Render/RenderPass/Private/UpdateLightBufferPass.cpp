@@ -88,9 +88,15 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     {
         if (!Light) continue;
 
-        // Shadow Map DSV 설정 및 클리어
+        // Shadow Map DSV/RTV 설정 및 클리어
         ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
-        DeviceContext->OMSetRenderTargets(0, nullptr, ShadowDSV);  // RTV는 필요 없음, DSV만 사용
+        ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
+        // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
+        ID3D11ShaderResourceView* NullSRV = nullptr;
+        DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+        DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // RTV는 필요 없음, DSV만 사용
+        const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f }; // VSM Default
+        DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
         DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
         
         // Shadow Map Viewport 설정
@@ -265,6 +271,12 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     
     // 원본 Render Targets 복원
     DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+
+    // Generate mipmaps for VSM color shadow map (for smoother filtering)
+    if (auto* ColorSRV = URenderer::GetInstance().GetDeviceResources()->GetDirectionalShadowMapColorSRV())
+    {
+        DeviceContext->GenerateMips(ColorSRV);
+    }
     
     // OMGetRenderTargets가 AddRef를 호출했으므로 Release 필요
     //for (int i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)

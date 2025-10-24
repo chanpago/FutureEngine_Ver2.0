@@ -200,6 +200,7 @@ Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
 SamplerState SamplerWrap : register(s0);
+SamplerState SamplerLinearClamp : register(s1);
 
 
 // Material flags
@@ -268,14 +269,24 @@ float CalculateShadowFactor(float3 WorldPos)
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
     
-    // Shadow Map에서 Depth 샘플링 (Point Filtering)
-    float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-    
-    // Shadow 테스트: CurrentDepth가 ShadowMapDepth보다 크면 그림자 속
-    // Bias를 적용하여 Shadow Acne 방지
-    float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-    
-    return Shadow;
+    // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
+    float2 Moments = ShadowMapTexture.Sample(SamplerLinearClamp, ShadowUV).rg;
+
+    // Clamp depth into [0,1] and apply small bias
+    float z = saturate(CurrentDepth - ShadowBias);
+    float m1 = Moments.x;
+    float m2 = Moments.y;
+
+    // Variance and Chebyshev upper bound
+    float variance = max(m2 - m1 * m1, 1e-6);
+    float d = z - m1;
+    float pMax = saturate(variance / (variance + d * d));
+
+    // Light bleeding reduction
+    const float BleedReduction = 0.2f; // 0..1
+    float visibility = (z <= m1) ? 1.0f : saturate((pMax - BleedReduction) / (1.0f - BleedReduction));
+
+    return visibility;
 }
 
 
@@ -537,6 +548,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     float4 finalPixel = float4(0.0f, 0.0f, 0.0f, 1.0f);
     float2 UV = Input.Tex;
     float3 ShadedWorldNormal = SafeNormalize3(Input.WorldNormal);
+    
     if (MaterialFlags & HAS_NORMAL_MAP)
     {
         ShadedWorldNormal = ComputeNormalMappedWorldNormal(UV, Input.WorldNormal, Input.WorldTangent);
