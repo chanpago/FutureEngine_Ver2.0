@@ -104,7 +104,8 @@ cbuffer ShadowMapConstants : register(b6)
     row_major float4x4 LightView;
     row_major float4x4 LightProjection;
     float ShadowBias;
-    float3 ShadowPadding;
+    float UseVSM;
+    float2 ShadowPadding;
 };
 
 
@@ -269,24 +270,37 @@ float CalculateShadowFactor(float3 WorldPos)
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
     
-    // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
-    float2 Moments = ShadowMapTexture.Sample(SamplerLinearClamp, ShadowUV).rg;
+    if (UseVSM < 0.5f)
+    {
+        // Classic depth compare
+        float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+        float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        return Shadow;
+    }
+    else
+    {
+        // VSM: configurable smoothing via mip bias
+        static const float VSM_MipBias = 1.25f;        // Increase for softer shadows
+        static const float VSM_MinVariance = 1e-5f;    // Floors variance to reduce hard edges
+        static const float VSM_BleedReduction = 0.2f;  // 0..1, higher reduces light bleeding
 
-    // Clamp depth into [0,1] and apply small bias
-    float z = saturate(CurrentDepth - ShadowBias);
-    float m1 = Moments.x;
-    float m2 = Moments.y;
+        // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
+        float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
 
-    // Variance and Chebyshev upper bound
-    float variance = max(m2 - m1 * m1, 1e-6);
-    float d = z - m1;
-    float pMax = saturate(variance / (variance + d * d));
+        // Clamp depth into [0,1] and apply small bias
+        float z = saturate(CurrentDepth - ShadowBias);
+        float m1 = Moments.x;
+        float m2 = Moments.y;
 
-    // Light bleeding reduction
-    const float BleedReduction = 0.2f; // 0..1
-    float visibility = (z <= m1) ? 1.0f : saturate((pMax - BleedReduction) / (1.0f - BleedReduction));
+        // Variance and Chebyshev upper bound
+        float variance = max(m2 - m1 * m1, VSM_MinVariance);
+        float d = z - m1;
+        float pMax = saturate(variance / (variance + d * d));
 
-    return visibility;
+        // Light bleeding reduction
+        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+        return visibility;
+    }
 }
 
 
