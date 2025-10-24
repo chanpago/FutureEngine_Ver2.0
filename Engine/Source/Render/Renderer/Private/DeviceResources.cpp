@@ -23,14 +23,14 @@ void UDeviceResources::Create(HWND InWindowHandle)
 	CreateNormalBuffer();
 	CreateDepthBuffer();
 	CreateSceneColorTarget();
-	// CreateShadowMapResources();  // TODO: 임시 비활성화
+	CreateShadowMapResources();  // TODO: 임시 비활성화
 	CreateFactories();
 }
 
 void UDeviceResources::Release()
 {
 	ReleaseFactories();
-	//ReleaseShadowMapResources();
+	ReleaseShadowMapResources();
 	ReleaseSceneColorTarget();
 	ReleaseFrameBuffer();
 	ReleaseNormalBuffer();

@@ -99,20 +99,20 @@ cbuffer LightCountInfo : register(b5)
     float2 Padding;
 };
 
-//cbuffer ShadowMapConstants : register(b6)
-//{
-//    row_major float4x4 LightView;
-//    row_major float4x4 LightProjection;
-//    float ShadowBias;
-//    float3 ShadowPadding;
-//};
+cbuffer ShadowMapConstants : register(b6)
+{
+    row_major float4x4 LightView;
+    row_major float4x4 LightProjection;
+    float ShadowBias;
+    float3 ShadowPadding;
+};
 
 
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
-//Texture2D ShadowMapTexture : register(t10);
+Texture2D ShadowMapTexture : register(t10);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -177,43 +177,6 @@ FSpotLightInfo GetSpotLight(uint LightIdx)
     return SpotLightInfos[LightInfoIdx];
 }
 
-// Shadow Map 샘플링 함수
-//float CalculateShadowFactor(float3 WorldPos)
-//{
-//    // 안전 검사: Light View/Projection Matrix가 Identity면 Shadow 없음
-//    // (이는 Shadow Map이 아직 렌더링되지 않았음을 의미)
-//    if (abs(LightView[0][0] - 1.0f) < 0.001f && abs(LightView[1][1] - 1.0f) < 0.001f)
-//    {
-//        return 1.0f;  // Shadow 없음
-//    }
-//    
-//    // World Position을 Light 공간으로 변환
-//    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView);
-//    LightSpacePos = mul(LightSpacePos, LightProjection);
-//    
-//    // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
-//    LightSpacePos.xyz /= LightSpacePos.w;
-//    
-//    // NDC [-1,1] -> Texture UV [0,1] 변환
-//    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-//    ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
-//    
-//    // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
-//    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-//        return 1.0f;
-//    
-//    // 현재 픽셀의 Light 공간 Depth
-//    float CurrentDepth = LightSpacePos.z;
-//    
-//    // Shadow Map에서 Depth 샘플링 (Point Filtering)
-//    float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-//    
-//    // Shadow 테스트: CurrentDepth가 ShadowMapDepth보다 크면 그림자 속
-//    // Bias를 적용하여 Shadow Acne 방지
-//    float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-//    
-//    return Shadow;
-//}
 
 cbuffer MaterialConstants : register(b2)
 {
@@ -237,6 +200,7 @@ Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
 SamplerState SamplerWrap : register(s0);
+
 
 // Material flags
 #define HAS_DIFFUSE_MAP  (1 << 0) // map_Kd
@@ -275,6 +239,45 @@ struct PS_OUTPUT
     float4 SceneColor : SV_Target0;
     float4 NormalData : SV_Target1;
 };
+
+// Shadow Map 샘플링 함수
+float CalculateShadowFactor(float3 WorldPos)
+{
+    // 안전 검사: Light View/Projection Matrix가 Identity면 Shadow 없음
+    // (이는 Shadow Map이 아직 렌더링되지 않았음을 의미)
+    if (abs(LightView[0][0] - 1.0f) < 0.001f && abs(LightView[1][1] - 1.0f) < 0.001f)
+    {
+        return 1.0f;  // Shadow 없음
+    }
+    
+    // World Position을 Light 공간으로 변환
+    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView);
+    LightSpacePos = mul(LightSpacePos, LightProjection);
+    
+    // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
+    LightSpacePos.xyz /= LightSpacePos.w;
+    
+    // NDC [-1,1] -> Texture UV [0,1] 변환
+    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+    ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
+    
+    // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
+    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+        return 1.0f;
+    
+    // 현재 픽셀의 Light 공간 Depth
+    float CurrentDepth = LightSpacePos.z;
+    
+    // Shadow Map에서 Depth 샘플링 (Point Filtering)
+    float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+    
+    // Shadow 테스트: CurrentDepth가 ShadowMapDepth보다 크면 그림자 속
+    // Bias를 적용하여 Shadow Acne 방지
+    float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+    
+    return Shadow;
+}
+
 
 // Safe Normalize Util Functions
 float2 SafeNormalize2(float2 v)
@@ -329,6 +332,8 @@ float3x3 Inverse3x3(float3x3 M)
     
     return inv;
 }
+
+
 
 // Lighting Calculation Functions
 float4 CalculateAmbientLight(FAmbientLightInfo info)
@@ -564,12 +569,13 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
 #if LIGHTING_MODEL_GOURAUD
     // Use pre-calculated vertex lighting; apply diffuse material/texture per-pixel
-    finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + Input.DiffuseLight.rgb * diffuseColor.rgb + Input.SpecularLight.rgb * specularColor.rgb;
+    //finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + Input.DiffuseLight.rgb * diffuseColor.rgb + Input.SpecularLight.rgb * specularColor.rgb;
+
     // Shadow Map 적용 (Pixel Shader에서 그림자 계산)
-    //float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
-    //float3 shadedDiffuse = Input.DiffuseLight.rgb * ShadowFactor;
-    //float3 shadedSpecular = Input.SpecularLight.rgb * ShadowFactor;
-    //finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + shadedDiffuse * diffuseColor.rgb + shadedSpecular * specularColor.rgb;
+    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    float3 shadedDiffuse = Input.DiffuseLight.rgb * ShadowFactor;
+    float3 shadedSpecular = Input.SpecularLight.rgb * ShadowFactor;
+    finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + shadedDiffuse * diffuseColor.rgb + shadedSpecular * specularColor.rgb;
     
 #elif LIGHTING_MODEL_LAMBERT || LIGHTING_MODEL_BLINNPHONG
     // Calculate lighting in pixel shader
@@ -578,14 +584,16 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
     // 1. Ambient Light
     Illumination.Ambient = CalculateAmbientLight(Ambient);
-    
+
+
+    //ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
     // 2. Directional Light (Shadow Map 적용)
-    //float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
-    //FIllumination DirectionalIllum = CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation);
-    //DirectionalIllum.Diffuse *= ShadowFactor;
-    //DirectionalIllum.Specular *= ShadowFactor;
-    //ADD_ILLUM(Illumination, DirectionalIllum);
-    ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
+    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    FIllumination DirectionalIllum = CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation);
+    DirectionalIllum.Diffuse *= ShadowFactor;
+    DirectionalIllum.Specular *= ShadowFactor;
+    ADD_ILLUM(Illumination, DirectionalIllum);
+    
 
     
     // 3. Point Lights

@@ -11,7 +11,7 @@ FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstant
 	: FRenderPass(InPipeline, InConstantBufferCamera, InConstantBufferModel), VS(InVS), PS(InPS), InputLayout(InLayout), DS(InDS)
 {
 	ConstantBufferMaterial = FRenderResourceFactory::CreateConstantBuffer<FMaterialConstants>();
-	//ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
+	ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
 }
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
@@ -42,21 +42,21 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	Pipeline->SetConstantBuffer(1, EShaderType::PS, ConstantBufferCamera);
 
 	// Shadow Map 상수 버퍼 및 SRV 바인딩 (b6, t10 슬롯)
-	//FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-	//if (UpdateLightBufferPass)
-	//{
-	//	ID3D11ShaderResourceView* ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
-	//	if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
-	//	{
-	//		FShadowMapConstants ShadowMapConsts;
-	//		ShadowMapConsts.LightViewMatrix = UpdateLightBufferPass->GetLightViewMatrix();
-	//		ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
-	//		ShadowMapConsts.ShadowBias = 0.005f;  // Shadow acne 방지용 bias
-	//		FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
-	//		Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
-	//		Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
-	//	}
-	//}
+	FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
+	if (UpdateLightBufferPass)
+	{
+		ID3D11ShaderResourceView* ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
+		{
+			FShadowMapConstants ShadowMapConsts;
+			ShadowMapConsts.LightViewMatrix = UpdateLightBufferPass->GetLightViewMatrix();
+			ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
+			ShadowMapConsts.ShadowBias = 0.005f;  // Shadow acne 방지용 bias
+			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
+			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
+			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+		}
+	}
 	
 	if (!(Context.ShowFlags & EEngineShowFlags::SF_StaticMesh)) { return; }
 	TArray<UStaticMeshComponent*>& MeshComponents = Context.StaticMeshes;
@@ -196,5 +196,5 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 void FStaticMeshPass::Release()
 {
 	SafeRelease(ConstantBufferMaterial);
-	//SafeRelease(ConstantBufferShadowMap);
+	SafeRelease(ConstantBufferShadowMap);
 }

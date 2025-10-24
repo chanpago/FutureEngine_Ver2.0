@@ -63,14 +63,14 @@ void URenderer::Init(HWND InWindowHandle)
 	CreateStaticMeshShader();
 	CreateGizmoShader();
 	CreateClusteredRenderingGrid();
-	//CreateShadowMapShader();
+	CreateShadowMapShader();
 
 	//ViewportClient->InitializeLayout(DeviceResources->GetViewportInfo());
 
-	// Shadow Map 베이킹 Pass (가장 먼저 실행)
-	//FUpdateLightBufferPass* UpdateLightBufferPass = new FUpdateLightBufferPass(Pipeline, ConstantBufferViewProj, ConstantBufferModels,
-	//	ShadowMapVS, ShadowMapPS, ShadowMapInputLayout);
-	//RenderPasses.push_back(UpdateLightBufferPass);
+	//Shadow Map 베이킹 Pass (가장 먼저 실행)
+	FUpdateLightBufferPass* UpdateLightBufferPass = new FUpdateLightBufferPass(Pipeline, ConstantBufferViewProj, ConstantBufferModels,
+		ShadowMapVS, ShadowMapPS, ShadowMapInputLayout);
+	RenderPasses.push_back(UpdateLightBufferPass);
 
 	LightPass = new FLightPass(Pipeline, ConstantBufferViewProj, GizmoInputLayout, GizmoVS, GizmoPS, DefaultDepthStencilState);
 	RenderPasses.push_back(LightPass);

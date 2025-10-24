@@ -50,15 +50,12 @@ FUpdateLightBufferPass::~FUpdateLightBufferPass()
 
 void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
 {
-    // TODO: 임시로 비활성화 - 디버깅용
-    return;
-    
     // Context에 이미 수집된 Light 컴포넌트들을 사용
     // Shadow Map 베이킹 실행
-    // BakeShadowMap(Context);
+    BakeShadowMap(Context);
 }
 
-/*  // BakeShadowMap 전체 주석 처리
+
 void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 {
     // TODO: Shadow Map 리소스가 준비되면 여기서 베이킹 수행
@@ -79,9 +76,9 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
 
     // 원본 Render Targets 저장
-    ID3D11RenderTargetView* OriginalRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = { nullptr };
+    ID3D11RenderTargetView* OriginalRTVs =  nullptr;
     ID3D11DepthStencilView* OriginalDSV = nullptr;
-    DeviceContext->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, OriginalRTVs, &OriginalDSV);
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
 
     // Directional Light Shadow Map 렌더링
     for (auto Light : Context.DirectionalLights)
@@ -173,104 +170,104 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         break;
     }
 
-    // ============================================================================
-    // TODO: Spot Light Shadow Map 렌더링 (나중에 구현)
-    // ============================================================================
-    /*
-    int SpotLightIndex = 0;
-    for (auto Light : Context.SpotLights)
-    {
-        if (!Light) continue;
-        if (SpotLightIndex >= 16) break; // 최대 16개 제한
+    //// ============================================================================
+    //// TODO: Spot Light Shadow Map 렌더링 (나중에 구현)
+    //// ============================================================================
+    ///*
+    //int SpotLightIndex = 0;
+    //for (auto Light : Context.SpotLights)
+    //{
+    //    if (!Light) continue;
+    //    if (SpotLightIndex >= 16) break; // 최대 16개 제한
 
-        // TODO: Spot Light Shadow Map RTV/DSV 설정 (Atlas 타일별)
-        // SpotShadowViewport.TopLeftX = (SpotLightIndex % 4) * 1024.0f;
-        // SpotShadowViewport.TopLeftY = (SpotLightIndex / 4) * 1024.0f;
-        // DeviceContext->RSSetViewports(1, &SpotShadowViewport);
-        
-        // Light View Projection Matrix 계산
-        FVector LightPos = Light->GetWorldLocation();
-        FVector LightDir = Light->GetForwardVector();
-        // TODO: Light 관점에서 View/Projection Matrix 설정
-        
-        // 모든 Static Mesh를 Light 관점에서 렌더링
-        for (auto MeshComp : Context.StaticMeshes)
-        {
-            if (!MeshComp || !MeshComp->IsVisible()) continue;
-            RenderPrimitive(MeshComp);
-        }
+    //    // TODO: Spot Light Shadow Map RTV/DSV 설정 (Atlas 타일별)
+    //    // SpotShadowViewport.TopLeftX = (SpotLightIndex % 4) * 1024.0f;
+    //    // SpotShadowViewport.TopLeftY = (SpotLightIndex / 4) * 1024.0f;
+    //    // DeviceContext->RSSetViewports(1, &SpotShadowViewport);
+    //    
+    //    // Light View Projection Matrix 계산
+    //    FVector LightPos = Light->GetWorldLocation();
+    //    FVector LightDir = Light->GetForwardVector();
+    //    // TODO: Light 관점에서 View/Projection Matrix 설정
+    //    
+    //    // 모든 Static Mesh를 Light 관점에서 렌더링
+    //    for (auto MeshComp : Context.StaticMeshes)
+    //    {
+    //        if (!MeshComp || !MeshComp->IsVisible()) continue;
+    //        RenderPrimitive(MeshComp);
+    //    }
 
-        SpotLightIndex++;
-    }
-    */
+    //    SpotLightIndex++;
+    //}
+    //*/
 
-    // ============================================================================
-    // TODO: Point Light Shadow Map 렌더링 (Cube Map - 6 faces) (나중에 구현)
-    // ============================================================================
-    /*
-    int PointLightIndex = 0;
-    for (auto Light : Context.PointLights)
-    {
-        if (!Light) continue;
-        if (PointLightIndex >= 16) break; // 최대 16개 제한
+    //// ============================================================================
+    //// TODO: Point Light Shadow Map 렌더링 (Cube Map - 6 faces) (나중에 구현)
+    //// ============================================================================
+    ///*
+    //int PointLightIndex = 0;
+    //for (auto Light : Context.PointLights)
+    //{
+    //    if (!Light) continue;
+    //    if (PointLightIndex >= 16) break; // 최대 16개 제한
 
-        FVector LightPos = Light->GetWorldLocation();
+    //    FVector LightPos = Light->GetWorldLocation();
 
-        // Cube map의 6개 face 방향
-        static const FVector LookDirections[6] = {
-            FVector(1, 0, 0),   // +X
-            FVector(-1, 0, 0),  // -X
-            FVector(0, 1, 0),   // +Y
-            FVector(0, -1, 0),  // -Y
-            FVector(0, 0, 1),   // +Z
-            FVector(0, 0, -1)   // -Z
-        };
+    //    // Cube map의 6개 face 방향
+    //    static const FVector LookDirections[6] = {
+    //        FVector(1, 0, 0),   // +X
+    //        FVector(-1, 0, 0),  // -X
+    //        FVector(0, 1, 0),   // +Y
+    //        FVector(0, -1, 0),  // -Y
+    //        FVector(0, 0, 1),   // +Z
+    //        FVector(0, 0, -1)   // -Z
+    //    };
 
-        static const FVector UpDirections[6] = {
-            FVector(0, 1, 0),   // +X face
-            FVector(0, 1, 0),   // -X face
-            FVector(0, 0, -1),  // +Y face
-            FVector(0, 0, 1),   // -Y face
-            FVector(0, 1, 0),   // +Z face
-            FVector(0, 1, 0)    // -Z face
-        };
+    //    static const FVector UpDirections[6] = {
+    //        FVector(0, 1, 0),   // +X face
+    //        FVector(0, 1, 0),   // -X face
+    //        FVector(0, 0, -1),  // +Y face
+    //        FVector(0, 0, 1),   // -Y face
+    //        FVector(0, 1, 0),   // +Z face
+    //        FVector(0, 1, 0)    // -Z face
+    //    };
 
-        for (int Face = 0; Face < 6; ++Face)
-        {
-            // TODO: Point Light Shadow Map RTV/DSV 설정 (Cube map face별)
-            // int CubeFaceIndex = PointLightIndex * 6 + Face;
-            // DeviceContext->OMSetRenderTargets(1, &PointShadowRTVs[CubeFaceIndex], PointShadowDSVs[CubeFaceIndex]);
-            // DeviceContext->RSSetViewports(1, &PointShadowViewport);
-            
-            // Light View Projection Matrix 계산
-            // TODO: LookDirections[Face], UpDirections[Face]를 사용하여 View Matrix 계산
-            
-            // 모든 Static Mesh를 Light 관점에서 렌더링
-            for (auto MeshComp : Context.StaticMeshes)
-            {
-                if (!MeshComp || !MeshComp->IsVisible()) continue;
-                RenderPrimitive(MeshComp);
-            }
-        }
+    //    for (int Face = 0; Face < 6; ++Face)
+    //    {
+    //        // TODO: Point Light Shadow Map RTV/DSV 설정 (Cube map face별)
+    //        // int CubeFaceIndex = PointLightIndex * 6 + Face;
+    //        // DeviceContext->OMSetRenderTargets(1, &PointShadowRTVs[CubeFaceIndex], PointShadowDSVs[CubeFaceIndex]);
+    //        // DeviceContext->RSSetViewports(1, &PointShadowViewport);
+    //        
+    //        // Light View Projection Matrix 계산
+    //        // TODO: LookDirections[Face], UpDirections[Face]를 사용하여 View Matrix 계산
+    //        
+    //        // 모든 Static Mesh를 Light 관점에서 렌더링
+    //        for (auto MeshComp : Context.StaticMeshes)
+    //        {
+    //            if (!MeshComp || !MeshComp->IsVisible()) continue;
+    //            RenderPrimitive(MeshComp);
+    //        }
+    //    }
 
-        PointLightIndex++;
-    }
+    //    PointLightIndex++;
+    //}
     
 
     // Viewport 복원
     DeviceContext->RSSetViewports(1, &OriginalViewport);
     
     // 원본 Render Targets 복원
-    DeviceContext->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, OriginalRTVs, OriginalDSV);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
     
     // OMGetRenderTargets가 AddRef를 호출했으므로 Release 필요
-    for (int i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
-    {
-        if (OriginalRTVs[i]) OriginalRTVs[i]->Release();
-    }
-    if (OriginalDSV) OriginalDSV->Release();
+    //for (int i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+    //{
+    //    if (OriginalRTVs[i]) OriginalRTVs[i]->Release();
+    //}
+    //if (OriginalDSV) OriginalDSV->Release();
 }
-*/  // BakeShadowMap 주석 끝
+
 
 void FUpdateLightBufferPass::RenderPrimitive(UStaticMeshComponent* MeshComp)
 {
