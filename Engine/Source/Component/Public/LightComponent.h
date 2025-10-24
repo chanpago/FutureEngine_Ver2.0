@@ -89,5 +89,8 @@ protected:
 
     UBillBoardComponent* VisualizationBillboard = nullptr;
 private:
-    
+    float ShadowResolutionScale;
+    float ShadowBias;
+    float ShadowSlopeBias;
+    float ShadowSharpen;
 };

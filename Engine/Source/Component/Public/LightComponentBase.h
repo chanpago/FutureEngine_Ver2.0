@@ -76,4 +76,6 @@ protected:
 
     bool bVisible = true;
     bool bLightEnabled = true; // 조명 계산 포함 여부 (Outliner Visible과 독립)
+
+    bool bCastShadows;
 };
