@@ -96,9 +96,72 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         // Shadow Map Viewport 설정
         DeviceContext->RSSetViewports(1, &DirectionalShadowViewport);
         
+        // 1. 카메라 Frustum 8개 corner 계산 (World Space)
+        FVector FrustumCorners[8];
+        {
+            // NDC 공간의 8개 모서리 (near 4개 + far 4개)
+            FVector4 NDCCorners[8] = {
+                // Near plane corners
+                FVector4(-1.0f, -1.0f, 0.0f, 1.0f), // 왼쪽 아래
+                FVector4( 1.0f, -1.0f, 0.0f, 1.0f), // 오른쪽 아래
+                FVector4( 1.0f,  1.0f, 0.0f, 1.0f), // 오른쪽 위
+                FVector4(-1.0f,  1.0f, 0.0f, 1.0f), // 왼쪽 위
+                // Far plane corners
+                FVector4(-1.0f, -1.0f, 1.0f, 1.0f),
+                FVector4( 1.0f, -1.0f, 1.0f, 1.0f),
+                FVector4( 1.0f,  1.0f, 1.0f, 1.0f),
+                FVector4(-1.0f,  1.0f, 1.0f, 1.0f)
+            };
+            
+            // 2.카메라 ViewProjection matrix 가져오기
+            UCamera* MainCamera = Context.CurrentCamera;
+            FMatrix CameraView = MainCamera->GetCameraViewMatrix();
+            FMatrix CameraProj = MainCamera->GetCameraProjectionMatrix();
+            FVector CameraPos = MainCamera->GetLocation();
+            FVector CameraForward = MainCamera->GetForward();
+            FVector CameraRight = MainCamera->GetRight();
+            FVector CameraUp = MainCamera->GetUp();
+            
+            float Near = MainCamera->GetNearZ();
+            float Far = MainCamera->GetFarZ();
+            float FOV = MainCamera->GetFovY();
+            float AspectRatio = MainCamera->GetAspect();
+            
+            // 정확한 Frustum corner 계산 (기하학적 방법)
+            float TanHalfFOV = tanf(FVector::GetDegreeToRadian(FOV) * 0.5f);
+            float NearHeight = Near * TanHalfFOV;
+            float NearWidth = NearHeight * AspectRatio;
+            float FarHeight = Far * TanHalfFOV;
+            float FarWidth = FarHeight * AspectRatio;
+            
+            // Near plane corners
+            FVector NearCenter = CameraPos + CameraForward * Near;
+            FrustumCorners[0] = NearCenter - CameraRight * NearWidth - CameraUp * NearHeight; // 왼쪽 아래
+            FrustumCorners[1] = NearCenter + CameraRight * NearWidth - CameraUp * NearHeight; // 오른쪽 아래
+            FrustumCorners[2] = NearCenter + CameraRight * NearWidth + CameraUp * NearHeight; // 오른쪽 위
+            FrustumCorners[3] = NearCenter - CameraRight * NearWidth + CameraUp * NearHeight; // 왼쪽 위
+            
+            // Far plane corners
+            FVector FarCenter = CameraPos + CameraForward * Far;
+            FrustumCorners[4] = FarCenter - CameraRight * FarWidth - CameraUp * FarHeight;
+            FrustumCorners[5] = FarCenter + CameraRight * FarWidth - CameraUp * FarHeight;
+            FrustumCorners[6] = FarCenter + CameraRight * FarWidth + CameraUp * FarHeight;
+            FrustumCorners[7] = FarCenter - CameraRight * FarWidth + CameraUp * FarHeight;
+        }
+        
         // Light View Matrix 계산
         FVector LightDir = Light->GetForwardVector().GetNormalized();
-        FVector LightPos = -LightDir * 500.0f;  // Light를 충분히 멀리 배치 (Directional Light는 무한 멀리에 있다고 가정)
+        
+        // Frustum 중심 계산
+        FVector FrustumCenter = FVector::ZeroVector();
+        for (int i = 0; i < 8; i++)
+        {
+            FrustumCenter = FrustumCenter + FrustumCorners[i];
+        }
+        FrustumCenter = FrustumCenter * (1.0f / 8.0f);
+        
+        // Light Position: Frustum 중심에서 Light 방향 반대로 배치
+        FVector LightPos = FrustumCenter - LightDir * 500.0f;
         FVector TargetPos = LightPos + LightDir;
         FVector UpVector(0, 0, 1);  // 월드 Up 방향
         
@@ -108,6 +171,10 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
             UpVector = FVector(0, 1, 0);
         }
         
+
+
+
+        // 3. Light View Matrix 계산
         // View Matrix: LookAt 직접 계산
         FVector ZAxis = (TargetPos - LightPos).GetNormalized();  // Forward
         FVector XAxis = (UpVector.FVector::Cross(ZAxis)).GetNormalized();  // Right
@@ -133,20 +200,55 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
         LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
         LightViewMatrix.Data[3][3] = 1.0f;
+
+        // 4. Frustum을 Light Space로 변환
+        FVector LightSpaceCorners[8];
+        for (int i = 0; i < 8; ++i)
+        {
+            // World space corner를 Light View Matrix로 변환
+            FVector4 WorldCorner = FVector4(FrustumCorners[i],1);
+            FVector4 LightSpaceCorner = FMatrix::VectorMultiply(WorldCorner, LightViewMatrix);
+            LightSpaceCorners[i] = FVector(LightSpaceCorner.X, LightSpaceCorner.Y, LightSpaceCorner.Z);
+        }
         
-        // Projection Matrix: Orthographic 직접 계산 (Directional Light는 병렬 광선)
-        float OrthoWidth = 300.0f;   // 그림자 범위 너비
-        float OrthoHeight = 300.0f;  // 그림자 범위 높이
-        float NearZ = 0.1f;
-        float FarZ = 1000.0f;
+        // 5. Light Space AABB 계산
+        FVector MinAABB = LightSpaceCorners[0];
+        FVector MaxAABB = LightSpaceCorners[0];
+        for (int i = 1; i < 8; ++i)
+        {
+            MinAABB.X = std::min(MinAABB.X, LightSpaceCorners[i].X);
+            MinAABB.Y = std::min(MinAABB.Y, LightSpaceCorners[i].Y);
+            MinAABB.Z = std::min(MinAABB.Z, LightSpaceCorners[i].Z);
+            
+            MaxAABB.X = std::max(MaxAABB.X, LightSpaceCorners[i].X);
+            MaxAABB.Y = std::max(MaxAABB.Y, LightSpaceCorners[i].Y);
+            MaxAABB.Z = std::max(MaxAABB.Z, LightSpaceCorners[i].Z);
+        }
         
+        // 6. AABB를 사용하여 Perspective Projection Matrix 계산
+        float NearZ = std::max(1.0f, MinAABB.Z);  // 너무 가까우면 precision 문제
+        float FarZ = MaxAABB.Z;
+        
+        // FOV 계산: AABB 크기에 맞춰 설정
+        float AABBWidth = MaxAABB.X - MinAABB.X;
+        float AABBHeight = MaxAABB.Y - MinAABB.Y;
+        float Distance = std::max(10.0f, (NearZ + FarZ) * 0.5f);
+        float FovY = 2.0f * atanf(AABBHeight / (2.0f * Distance));
+        float AspectRatio = AABBWidth / AABBHeight;
+
+        UE_LOG_INFO("AABB: Min(%.2f, %.2f, %.2f), Max(%.2f, %.2f, %.2f)", 
+            MinAABB.X, MinAABB.Y, MinAABB.Z, MaxAABB.X, MaxAABB.Y, MaxAABB.Z);
+        UE_LOG_INFO("NearZ: %.2f, FarZ: %.2f, FovY: %.2f", NearZ, FarZ, FVector::GetRadianToDegree(FovY));
+        
+        // Perspective Projection 행렬
         FMatrix LightProjMatrix = FMatrix::Identity();
-        LightProjMatrix.Data[0][0] = 2.0f / OrthoWidth;
-        LightProjMatrix.Data[1][1] = 2.0f / OrthoHeight;
-        LightProjMatrix.Data[2][2] = 1.0f / (FarZ - NearZ);
-        LightProjMatrix.Data[3][2] = -NearZ / (FarZ - NearZ);
-        LightProjMatrix.Data[3][3] = 1.0f;
-        
+        float TanHalfFovY = tanf(FovY * 0.5f);
+        LightProjMatrix.Data[0][0] = 1.0f / (TanHalfFovY * AspectRatio);
+        LightProjMatrix.Data[1][1] = 1.0f / TanHalfFovY;
+        LightProjMatrix.Data[2][2] = FarZ / (FarZ - NearZ);
+        LightProjMatrix.Data[2][3] = 1.0f;
+        LightProjMatrix.Data[3][2] = -NearZ * FarZ / (FarZ - NearZ);
+        LightProjMatrix.Data[3][3] = 0.0f;
         // StaticMeshPass에서 사용할 수 있도록 저장
         this->LightViewMatrix = LightViewMatrix;
         this->LightProjectionMatrix = LightProjMatrix;

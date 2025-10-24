@@ -51,7 +51,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			FShadowMapConstants ShadowMapConsts;
 			ShadowMapConsts.LightViewMatrix = UpdateLightBufferPass->GetLightViewMatrix();
 			ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
-			ShadowMapConsts.ShadowBias = 0.00f;  // Shadow acne 방지용 bias
+			ShadowMapConsts.ShadowBias = 0.005f;  // Shadow acne 방지용 bias
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);

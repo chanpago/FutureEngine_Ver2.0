@@ -57,6 +57,10 @@ private:
     FMatrix LightViewMatrix = FMatrix::Identity();
     FMatrix LightProjectionMatrix = FMatrix::Identity();
 
+    FVector4 LightSpaceCorners[8];
+    
     // Light 전용 Camera 상수 버퍼 (ConstantBufferCamera를 덮어쓰지 않기 위해)
     ID3D11Buffer* LightCameraConstantBuffer = nullptr;
+
+    
 };

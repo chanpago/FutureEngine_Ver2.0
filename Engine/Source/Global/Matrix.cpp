@@ -101,6 +101,8 @@ FMatrix FMatrix::operator*(const FMatrix& InOtherMatrix) const
 	return Result;
 }
 
+
+
 void FMatrix::operator*=(const FMatrix& InOtherMatrix)
 {
 	*this = (*this) * InOtherMatrix;
@@ -373,5 +375,6 @@ FVector FMatrix::TransformPosition(const FVector& V) const
         V.X * Data[0][2] + V.Y * Data[1][2] + V.Z * Data[2][2] + Data[3][2]
     );
 }
+
 
 

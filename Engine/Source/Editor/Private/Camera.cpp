@@ -141,7 +141,7 @@ void UCamera::UpdateMatrixByPers()
 	FMatrix R = FMatrix(Right, Up, Forward);
 	R = R.Transpose();
 	CameraConstants.View = T * R;
-
+	PerspectiveCameraView = T * R;
 	/**
 	 * @brief Projection 행렬 연산
 	 * 원근 투영 행렬 (HLSL에서 row-major로 mul(p, M) 일관성 유지)
@@ -163,7 +163,7 @@ void UCamera::UpdateMatrixByPers()
 	P.Data[3][3] = 0.0f;
 
 	CameraConstants.Projection = P;
-	
+	PerspectiveCameraProj = P;
 	CameraConstants.ViewWorldLocation = RelativeLocation;
 	CameraConstants.NearClip = NearZ;
 	CameraConstants.FarClip = FarZ;
