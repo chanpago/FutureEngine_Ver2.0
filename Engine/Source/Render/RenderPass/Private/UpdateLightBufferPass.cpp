@@ -63,6 +63,9 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     
     const auto& Renderer = URenderer::GetInstance();
     auto DeviceContext = Renderer.GetDeviceContext();
+
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
     
     // Shadow Map 렌더링용 파이프라인 설정
     if (!ShadowMapVS || !ShadowMapInputLayout)
@@ -254,6 +257,9 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     //}
     
 
+    // Shadow Map DSV를 unbind (다음 pass에서 SRV로 사용하기 위해)
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    
     // Viewport 복원
     DeviceContext->RSSetViewports(1, &OriginalViewport);
     
