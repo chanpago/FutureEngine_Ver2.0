@@ -461,7 +461,51 @@ void UDeviceResources::CreateShadowMapResources()
 	}
 
 	UE_LOG("Directional Shadow Map Resources Created Successfully (Size: %dx%d)", ShadowMapSize, ShadowMapSize);
-	
+
+	D3D11_TEXTURE2D_DESC ColorDesc = {};
+	ColorDesc.Width = ShadowMapSize;
+	ColorDesc.Height = ShadowMapSize;
+	ColorDesc.MipLevels = 1;
+	ColorDesc.ArraySize = 1;
+	ColorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
+	ColorDesc.SampleDesc.Count = 1;
+	ColorDesc.Usage = D3D11_USAGE_DEFAULT;
+	ColorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+	hr = Device->CreateTexture2D(&ColorDesc, nullptr, &DirectionalShadowMapColorTexture);
+	if (FAILED(hr))
+	{
+		UE_LOG_ERROR("Failed to create Directional Shadow Map Color Texture");
+		ReleaseShadowMapResources();
+		return;
+	}
+
+	D3D11_RENDER_TARGET_VIEW_DESC RTVDesc = {};
+	RTVDesc.Format = ColorDesc.Format;
+	RTVDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+	RTVDesc.Texture2D.MipSlice = 0;
+
+	hr = Device->CreateRenderTargetView(DirectionalShadowMapColorTexture, &RTVDesc, &DirectionalShadowMapColorRTV);
+	if (FAILED(hr))
+	{
+		UE_LOG_ERROR("Failed to create Directional Shadow Map Color RTV");
+		ReleaseShadowMapResources();
+		return;
+	}
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC ColorSRVDesc = {};
+	ColorSRVDesc.Format = ColorDesc.Format;
+	ColorSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	ColorSRVDesc.Texture2D.MostDetailedMip = 0;
+	ColorSRVDesc.Texture2D.MipLevels = 1;
+
+	hr = Device->CreateShaderResourceView(DirectionalShadowMapColorTexture, &ColorSRVDesc, &DirectionalShadowMapColorSRV);
+	if (FAILED(hr))
+	{
+		UE_LOG_ERROR("Failed to create Directional Shadow Map Color SRV");
+		ReleaseShadowMapResources();
+		return;
+	}
 }
 
 /**
@@ -469,7 +513,10 @@ void UDeviceResources::CreateShadowMapResources()
  */
 void UDeviceResources::ReleaseShadowMapResources()
 {
-	SafeRelease(DirectionalShadowMapSRV);
-	SafeRelease(DirectionalShadowMapDSV);
-	SafeRelease(DirectionalShadowMapTexture);
+    SafeRelease(DirectionalShadowMapColorSRV);
+    SafeRelease(DirectionalShadowMapColorRTV);
+    SafeRelease(DirectionalShadowMapColorTexture);
+    SafeRelease(DirectionalShadowMapSRV);
+    SafeRelease(DirectionalShadowMapDSV);
+    SafeRelease(DirectionalShadowMapTexture);
 }
