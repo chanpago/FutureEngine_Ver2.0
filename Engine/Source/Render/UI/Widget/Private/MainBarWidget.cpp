@@ -497,6 +497,21 @@ void UMainBarWidget::RenderShowFlagsMenu()
 			CurrentLevel->SetShowFlags(ShowFlags);
 		}
 
+		bool bEnabledPCF = (ShowFlags & EEngineShowFlags::SF_PCF) != 0;
+		if (ImGui::MenuItem("PCF 적용", nullptr, bEnabledPCF))
+		{
+			if (bEnabledPCF)
+			{
+				ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_PCF);
+				UE_LOG("MainBarWidget: PCF 비활성화");
+			}
+			else
+			{
+				ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_PCF);
+				UE_LOG("MainBarWidget: PCF 활성화"); 
+			}
+			CurrentLevel->SetShowFlags(ShowFlags);
+		}
 		ImGui::EndMenu();
 	}
 }

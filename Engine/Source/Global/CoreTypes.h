@@ -175,5 +175,6 @@ struct FShadowMapConstants
 	FMatrix LightProjectionMatrix;
 	float ShadowBias;
 	float UseVSM; // 0 = depth compare, 1 = VSM
-	FVector2 Padding;
+	float UsePCF;
+	float Padding;
 };

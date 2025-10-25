@@ -47,7 +47,8 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	if (UpdateLightBufferPass)
 	{
 		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
-		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM
+		const bool bUsePCF = (Context.ShowFlags & EEngineShowFlags::SF_PCF) != 0;
+		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM || bUsePCF
 			? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
 			: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
@@ -57,6 +58,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
 			ShadowMapConsts.ShadowBias = bUseVSM ? 0.0015f : 0.005f;  // VSM needs less bias
 			ShadowMapConsts.UseVSM = bUseVSM ? 1.0f : 0.0f;
+			ShadowMapConsts.UsePCF = bUsePCF ? 1.0f : 0.0f;
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
