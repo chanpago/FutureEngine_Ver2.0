@@ -92,11 +92,19 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		{
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
-			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+			if (bUseCSM)
+			{
+				Pipeline->SetShaderResourceView(11, EShaderType::PS, ShadowMapSRV);
+			}
+			else
+			{
+				Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+			}
 		}
 		else
 		{
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
+			Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
 		}
 	}
 	

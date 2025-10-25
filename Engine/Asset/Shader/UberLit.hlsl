@@ -117,7 +117,7 @@ StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
-Texture2DArray CascadedShadowMapTexture : register(t10);
+Texture2DArray CascadedShadowMapTexture : register(t11);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -277,40 +277,75 @@ float CalculateShadowFactor(float3 WorldPos)
         return 1.0f;  // Shadow 없음
     }
     
-    // World Position을 Light 공간으로 변환
-    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView[0]);
-    LightSpacePos = mul(LightSpacePos, LightProjection[0]);
+    // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
+    float ViewDepth = mul(float4(WorldPos, 1.0f), View).z;
     
-    // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
-    LightSpacePos.xyz /= LightSpacePos.w;
+    // 최종 그림자 값 (1.0 = 빛, 0.0 = 그림자)
+    float Shadow = 1.0f;
     
-    // NDC [-1,1] -> Texture UV [0,1] 변환
-    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-    ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
-    
-    // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
-    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-        return 1.0f;
-    
-    // 현재 픽셀의 Light 공간 Depth
-    float CurrentDepth = LightSpacePos.z;
-    
-    if (UseVSM < 0.5f)
+    if (UseCSM > 0.5f)  // CSM + VSM(?)
     {
-        // Classic depth compare
-        float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-        float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-        return Shadow;
+        int CascadeIndex = 0;
+        if (ViewDepth > CascadeSplits.x)    CascadeIndex = 1;
+        if (ViewDepth > CascadeSplits.y)    CascadeIndex = 2;
+        if (ViewDepth > CascadeSplits.z)    CascadeIndex = 3;
+        
+        float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView[CascadeIndex]);
+        LightSpacePos = mul(LightSpacePos, LightProjection[CascadeIndex]);
+        LightSpacePos.xyz /= LightSpacePos.w;
+        
+        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+        ShadowUV.y = 1.0f - ShadowUV.y;
+        
+        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+            return 1.0f;
+        
+        float CurrentDepth = LightSpacePos.z;
+        // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
+        // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        
+        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
+        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
+        Shadow = CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
     }
-    else
+    else // only VSM
     {
-        // VSM: configurable smoothing via mip bias
-        static const float VSM_MipBias = 1.25f;        // Increase for softer shadows
+        // World Position을 Light 공간으로 변환
+        float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView[0]);
+        LightSpacePos = mul(LightSpacePos, LightProjection[0]);
+    
+        // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
+        LightSpacePos.xyz /= LightSpacePos.w;
+    
+        // NDC [-1,1] -> Texture UV [0,1] 변환
+        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+        ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
+    
+        // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
+        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+            return 1.0f;
+        
+        // 현재 픽셀의 Light 공간 Depth
+        float CurrentDepth = LightSpacePos.z;
+        
+        if (UseVSM < 0.5f)
+        {
+            // Classic depth compare
+            float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+            Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        }
+        else
+        {
+            // VSM: configurable smoothing via mip bias
+            static const float VSM_MipBias = 1.25f;        // Increase for softer shadows
 
-        // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
-        float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
-        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+            // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
+            float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
+            Shadow = CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+        }
     }
+    
+    return Shadow;
 }
 
 // Safe Normalize Util Functions

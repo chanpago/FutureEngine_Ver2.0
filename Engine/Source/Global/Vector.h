@@ -67,6 +67,11 @@ struct FVector
 	FVector& operator*=(float InRatio);
 
 	/**
+	 * @brief 자신의 벡터를 스칼라로 나눈 뒤 자신을 반환
+	 */
+	FVector& operator/=(float InScalar);
+
+	/**
 	 * @brief 자신의 벡터의 각 성분의 부호를 반전한 값을 반환
 	 */
 	FVector operator-() const { return {-X, -Y, -Z}; }

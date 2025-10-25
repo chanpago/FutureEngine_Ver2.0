@@ -94,12 +94,23 @@ FVector& FVector::operator-=(const FVector& InOther)
 /**
  * @brief 자신의 벡터에서 배율을 곱한 뒤 자신을 반환
  */
-
 FVector& FVector::operator*=(const float InRatio)
 {
 	X *= InRatio;
 	Y *= InRatio;
 	Z *= InRatio;
+
+	return *this;
+}
+
+/**
+* @brief 자신의 벡터를 스칼라로 나눈 뒤 자신을 반환
+*/
+FVector& FVector::operator/=(float InScalar)
+{
+	X /= InScalar;
+	Y /= InScalar;
+	Z /= InScalar;
 
 	return *this;
 }
