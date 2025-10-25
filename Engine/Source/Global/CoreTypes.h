@@ -169,11 +169,15 @@ struct FGlobalLightConstant
 	FDirectionalLightInfo Directional;
 };
 
+#define MAX_CASCADES 4
+
 struct FShadowMapConstants
 {
-	FMatrix LightViewMatrix;
-	FMatrix LightProjectionMatrix;
+	FMatrix LightViewMatrix[MAX_CASCADES];
+	FMatrix LightProjectionMatrix[MAX_CASCADES];
+	FVector4 CascadeSplits;
 	float ShadowBias;
 	float UseVSM; // 0 = depth compare, 1 = VSM
-	FVector2 Padding;
+	float UseCSM; // 0 = no CSM, 1 = enable CSM
+	float Padding;
 };

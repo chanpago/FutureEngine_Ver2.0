@@ -16,7 +16,6 @@ FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstant
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
 {
-
 	const auto& Renderer = URenderer::GetInstance();
 	FRenderState RenderState = UStaticMeshComponent::GetClassDefaultRenderState();
 	if (Context.ViewMode == EViewModeIndex::VMI_Wireframe)
@@ -47,16 +46,42 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	if (UpdateLightBufferPass)
 	{
 		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
-		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM
-			? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
-			: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
-		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
+		const bool bUseCSM = (Context.ShowFlags & EEngineShowFlags::SF_CSM) != 0;
+		
+		bool bShouldBindShadows = bUseCSM || bUseVSM;
+		ID3D11ShaderResourceView* ShadowMapSRV = nullptr;
+		FShadowMapConstants ShadowMapConsts = {};
+
+		if (bUseCSM)
 		{
-			FShadowMapConstants ShadowMapConsts;
-			ShadowMapConsts.LightViewMatrix = UpdateLightBufferPass->GetLightViewMatrix();
-			ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
+			if (bUseVSM)
+			{
+				// CSM + VSM
+				ShadowMapConsts.UseVSM = 1.0f;
+				ShadowMapConsts.ShadowBias = 0.0015f;  // VSM needs less bias
+			}
+			else
+			{
+				// Only CSM
+				ShadowMapConsts.UseVSM = 0.0f;
+				ShadowMapConsts.ShadowBias = 0.005f;  // VSM needs less bias
+			}
+		}
+		else
+		{
+			// No CSM
+			ShadowMapConsts.LightViewMatrix[0] = UpdateLightBufferPass->GetLightViewMatrix();
+			ShadowMapConsts.LightProjectionMatrix[0] = UpdateLightBufferPass->GetLightProjectionMatrix();
 			ShadowMapConsts.ShadowBias = bUseVSM ? 0.0015f : 0.005f;  // VSM needs less bias
 			ShadowMapConsts.UseVSM = bUseVSM ? 1.0f : 0.0f;
+
+			ShadowMapSRV = bUseVSM
+				? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
+				: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+		}
+		
+		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
+		{
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);

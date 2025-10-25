@@ -11,6 +11,7 @@
 #define NUM_POINT_LIGHT 8
 #define NUM_SPOT_LIGHT 8
 #define ADD_ILLUM(a, b) { (a).Ambient += (b).Ambient; (a).Diffuse += (b).Diffuse; (a).Specular += (b).Specular; }
+#define MAX_CASCADES 4
 
 static const float PI = 3.14159265f;
 
@@ -101,11 +102,13 @@ cbuffer LightCountInfo : register(b5)
 
 cbuffer ShadowMapConstants : register(b6)
 {
-    row_major float4x4 LightView;
-    row_major float4x4 LightProjection;
+    row_major float4x4 LightView[MAX_CASCADES];
+    row_major float4x4 LightProjection[MAX_CASCADES];
+    float4 CascadeSplits;
     float ShadowBias;
     float UseVSM;
-    float2 ShadowPadding;
+    float UseCSM;
+    float ShadowPadding;
 };
 
 
@@ -247,14 +250,14 @@ float CalculateShadowFactor(float3 WorldPos)
 {
     // 안전 검사: Light View/Projection Matrix가 Identity면 Shadow 없음
     // (이는 Shadow Map이 아직 렌더링되지 않았음을 의미)
-    if (abs(LightView[0][0] - 1.0f) < 0.001f && abs(LightView[1][1] - 1.0f) < 0.001f)
+    if (abs(LightView[0][0][0] - 1.0f) < 0.001f && abs(LightView[0][1][1] - 1.0f) < 0.001f)
     {
         return 1.0f;  // Shadow 없음
     }
     
     // World Position을 Light 공간으로 변환
-    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView);
-    LightSpacePos = mul(LightSpacePos, LightProjection);
+    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView[0]);
+    LightSpacePos = mul(LightSpacePos, LightProjection[0]);
     
     // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
     LightSpacePos.xyz /= LightSpacePos.w;
