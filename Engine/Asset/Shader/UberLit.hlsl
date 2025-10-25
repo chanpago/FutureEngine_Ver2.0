@@ -104,7 +104,8 @@ cbuffer ShadowMapConstants : register(b6)
     row_major float4x4 LightView;
     row_major float4x4 LightProjection;
     float ShadowBias;
-    float3 ShadowPadding;
+    float UseVSM;
+    float2 ShadowPadding;
 };
 
 
@@ -200,6 +201,7 @@ Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
 SamplerState SamplerWrap : register(s0);
+SamplerState SamplerLinearClamp : register(s1);
 SamplerComparisonState SamplerPCF : register(s10);
 
 // Material flags
@@ -268,6 +270,37 @@ float CalculateShadowFactor(float3 WorldPos)
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
     
+    if (UseVSM < 0.5f)
+    {
+        // Classic depth compare
+        float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+        float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        return Shadow;
+    }
+    else
+    {
+        // VSM: configurable smoothing via mip bias
+        static const float VSM_MipBias = 1.25f;        // Increase for softer shadows
+        static const float VSM_MinVariance = 1e-5f;    // Floors variance to reduce hard edges
+        static const float VSM_BleedReduction = 0.2f;  // 0..1, higher reduces light bleeding
+
+        // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
+        float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
+
+        // Clamp depth into [0,1] and apply small bias
+        float z = saturate(CurrentDepth - ShadowBias);
+        float m1 = Moments.x;
+        float m2 = Moments.y;
+
+        // Variance and Chebyshev upper bound
+        float variance = max(m2 - m1 * m1, VSM_MinVariance);
+        float d = z - m1;
+        float pMax = saturate(variance / (variance + d * d));
+
+        // Light bleeding reduction
+        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+        return visibility;
+    }
     // 3x3 PCF (Percentage-Closer Filtering)
     float Shadow = 0.0f;
     float2 TexelSize;
@@ -560,6 +593,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     float4 finalPixel = float4(0.0f, 0.0f, 0.0f, 1.0f);
     float2 UV = Input.Tex;
     float3 ShadedWorldNormal = SafeNormalize3(Input.WorldNormal);
+    
     if (MaterialFlags & HAS_NORMAL_MAP)
     {
         ShadedWorldNormal = ComputeNormalMappedWorldNormal(UV, Input.WorldNormal, Input.WorldTangent);
