@@ -417,6 +417,7 @@ void URenderer::CreateShadowMapShader()
 
 	RegisterShaderReloadCache(ShaderPath, ShaderUsage::STATICMESH);
 	ShadowMapPCFSampler = FRenderResourceFactory::CreatePCFShadowSamplerState();
+	ShadowMapClampSampler = FRenderResourceFactory::CreateClampShadowSamplerState();
 }
 
 void URenderer::CreateClusteredRenderingGrid()

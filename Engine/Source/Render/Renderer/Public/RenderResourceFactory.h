@@ -23,6 +23,7 @@ public:
 	static ID3D11SamplerState* CreateSamplerState(D3D11_FILTER InFilter, D3D11_TEXTURE_ADDRESS_MODE InAddressMode);
 	static ID3D11SamplerState* CreateFXAASamplerState();
 	static ID3D11SamplerState* CreatePCFShadowSamplerState();
+	static ID3D11SamplerState* CreateClampShadowSamplerState();
 	static ID3D11RasterizerState* GetRasterizerState(const FRenderState& InRenderState);
 	static void ReleaseRasterizerState();
 

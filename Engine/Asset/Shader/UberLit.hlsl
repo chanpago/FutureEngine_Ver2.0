@@ -297,6 +297,7 @@ float CalculateShadowFactor(float3 WorldPos)
                 // ShadowUV + Offset에서 읽은 depth와 세번째 인자랑 비교
                 // 세번째 인자가 더 작으면 true -> 1.0 반환 (빛 받음)
                 // 아니라면 false -> 0.0 반환 (그림자)
+     
                 Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowBias);
             }
         }

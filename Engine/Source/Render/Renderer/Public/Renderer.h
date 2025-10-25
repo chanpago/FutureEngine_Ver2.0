@@ -114,6 +114,8 @@ public:
 	const TArray<FRenderPass*>& GetRenderPasses() const { return RenderPasses; }
 
 	ID3D11SamplerState* GetShadowMapPCFSampler() const { return ShadowMapPCFSampler; }
+	ID3D11SamplerState* GetShadowMapClampSampler() const { return ShadowMapClampSampler; }
+	
 private:
 	/*
 	* @brief URenderer가 Initialize 메소드로 vertex shader, pixel shader들을 생성할 때, 해당 셰이더 파일의 용도와 최종 수정 시간을 기록합니다.
@@ -174,6 +176,8 @@ private:
 	ID3D11PixelShader* ShadowMapPS = nullptr;
 	ID3D11InputLayout* ShadowMapInputLayout = nullptr;
 	ID3D11SamplerState* ShadowMapPCFSampler = nullptr;
+	ID3D11SamplerState* ShadowMapClampSampler = nullptr;
+
 
 	// Texture Shaders
 	ID3D11VertexShader* TextureVertexShader = nullptr;

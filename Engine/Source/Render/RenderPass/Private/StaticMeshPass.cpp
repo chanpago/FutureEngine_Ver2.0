@@ -36,7 +36,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
     // Set default samplers: s0 and s1 (linear clamp)
     Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
-    Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetShadowMapClampSampler());
 
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);

@@ -257,6 +257,35 @@ ID3D11SamplerState* FRenderResourceFactory::CreatePCFShadowSamplerState()
 	return PCFShadowSamplerState;
 }
 
+ID3D11SamplerState* FRenderResourceFactory::CreateClampShadowSamplerState()
+{
+	D3D11_SAMPLER_DESC SamplerDesc = {};
+
+	// VSM은 하드웨어 뎁스 비교를 사용하지 않으므로, 일반 선형 필터를 사용합니다.
+	// 밉맵(Mipmap)을 사용하므로 _MIP_LINEAR가 포함된 필터가 좋습니다.
+	SamplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+
+	// 텍스처 경계 밖을 샘플링할 때, 가장자리의 픽셀 값을 사용하도록 Clamp 모드를 설정합니다.
+	// 이는 그림자 가장자리에서 예기치 않은 값이 샘플링되는 것을 방지합니다.
+	SamplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+	SamplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+	SamplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+
+	// VSM은 비교 샘플러가 아니므로, ComparisonFunc는 NEVER로 설정해야 합니다.
+	SamplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+
+	SamplerDesc.MinLOD = 0;
+	SamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+	ID3D11SamplerState* vsmSamplerState = nullptr;
+	if (FAILED(URenderer::GetInstance().GetDevice()->CreateSamplerState(&SamplerDesc, &vsmSamplerState)))
+	{
+		UE_LOG_ERROR("Renderer: VSM 샘플러 스테이트 생성 실패");
+		return nullptr;
+	}
+	return vsmSamplerState;
+}
+
 ID3D11RasterizerState* FRenderResourceFactory::GetRasterizerState(const FRenderState& InRenderState)
 {
 	const FRasterKey Key{ ToD3D11(InRenderState.FillMode), ToD3D11(InRenderState.CullMode) };
