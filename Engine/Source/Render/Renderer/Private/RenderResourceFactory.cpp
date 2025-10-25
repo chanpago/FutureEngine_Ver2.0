@@ -233,6 +233,30 @@ ID3D11SamplerState* FRenderResourceFactory::CreateFXAASamplerState()
 	return FXAASamplerState;
 }
 
+ID3D11SamplerState* FRenderResourceFactory::CreatePCFShadowSamplerState()
+{
+	D3D11_SAMPLER_DESC SamplerDesc = {};
+	SamplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+	SamplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+	SamplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+	SamplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+	SamplerDesc.BorderColor[0] = 1.0f;
+	SamplerDesc.BorderColor[1] = 1.0f;
+	SamplerDesc.BorderColor[2] = 1.0f;
+	SamplerDesc.BorderColor[3] = 1.0f;
+	SamplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+	SamplerDesc.MinLOD = 0;
+	SamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+	ID3D11SamplerState* PCFShadowSamplerState = nullptr;
+	if (FAILED(URenderer::GetInstance().GetDevice()->CreateSamplerState(&SamplerDesc, &PCFShadowSamplerState)))
+	{
+		UE_LOG_ERROR("Renderer: 샘플러 스테이트 생성 실패");
+		return nullptr;
+	}
+	return PCFShadowSamplerState;
+}
+
 ID3D11RasterizerState* FRenderResourceFactory::GetRasterizerState(const FRenderState& InRenderState)
 {
 	const FRasterKey Key{ ToD3D11(InRenderState.FillMode), ToD3D11(InRenderState.CullMode) };

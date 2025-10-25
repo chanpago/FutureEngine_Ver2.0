@@ -113,11 +113,13 @@ public:
 	FClusteredRenderingGridPass* GetClusteredRenderingGridPass() { return ClusteredRenderingGridPass; }
 	const TArray<FRenderPass*>& GetRenderPasses() const { return RenderPasses; }
 
+	ID3D11SamplerState* GetShadowMapPCFSampler() const { return ShadowMapPCFSampler; }
 private:
 	/*
 	* @brief URenderer가 Initialize 메소드로 vertex shader, pixel shader들을 생성할 때, 해당 셰이더 파일의 용도와 최종 수정 시간을 기록합니다.
 	* 런타임 중 셰이더 파일이 변경되었을 때, 기록된 정보를 토대로 변경된 파일을 사용하는 Shader Usage들을 찾아 셰이더를 핫 리로드할 수 있습니다.
 	*/
+
 	void RegisterShaderReloadCache(const std::filesystem::path& ShaderPath, ShaderUsage Usage);
 
 	UPipeline* Pipeline = nullptr;
@@ -171,6 +173,7 @@ private:
 	ID3D11VertexShader* ShadowMapVS = nullptr;
 	ID3D11PixelShader* ShadowMapPS = nullptr;
 	ID3D11InputLayout* ShadowMapInputLayout = nullptr;
+	ID3D11SamplerState* ShadowMapPCFSampler = nullptr;
 
 	// Texture Shaders
 	ID3D11VertexShader* TextureVertexShader = nullptr;

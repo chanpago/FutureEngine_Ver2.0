@@ -22,6 +22,7 @@ public:
 	static void CreateComputeShader(const wstring& InFilePath, ID3D11ComputeShader** OutComputeShader, const char* InEntryPoint = "main");
 	static ID3D11SamplerState* CreateSamplerState(D3D11_FILTER InFilter, D3D11_TEXTURE_ADDRESS_MODE InAddressMode);
 	static ID3D11SamplerState* CreateFXAASamplerState();
+	static ID3D11SamplerState* CreatePCFShadowSamplerState();
 	static ID3D11RasterizerState* GetRasterizerState(const FRenderState& InRenderState);
 	static void ReleaseRasterizerState();
 

@@ -200,7 +200,7 @@ Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
 SamplerState SamplerWrap : register(s0);
-
+SamplerComparisonState SamplerPCF : register(s10);
 
 // Material flags
 #define HAS_DIFFUSE_MAP  (1 << 0) // map_Kd
@@ -268,12 +268,35 @@ float CalculateShadowFactor(float3 WorldPos)
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
     
-    // Shadow Map에서 Depth 샘플링 (Point Filtering)
-    float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+    // 3x3 PCF (Percentage-Closer Filtering)
+    float Shadow = 0.0f;
+    float2 TexelSize;
+    uint Width, Height;
+    ShadowMapTexture.GetDimensions(Width, Height); // 텍스처의 가로, 세로 가져오기
+    TexelSize = 1.0f / float2(Width, Height); // 한 텍셀의 사이즈
     
-    // Shadow 테스트: CurrentDepth가 ShadowMapDepth보다 크면 그림자 속
-    // Bias를 적용하여 Shadow Acne 방지
-    float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+    // 3x3 커널 순회
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float2 Offset = float2(x, y) * TexelSize;
+            // CurrentDepth - bias <= ShadowMapDepth
+            // ShadowUV + Offset에서 읽은 depth와 세번째 인자랑 비교
+            // 세번째 인자가 더 작으면 true -> 1.0 반환 (빛 받음)
+            // 아니라면 false -> 0.0 반환 (그림자)
+            Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowBias);
+        }
+    }
+    // 9개 평균 계산하여 부드러운 그림자 값
+    Shadow /= 9.0f;
+    
+    //// Shadow Map에서 Depth 샘플링 (Point Filtering)
+    //float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+    
+    //// Shadow 테스트: CurrentDepth가 ShadowMapDepth보다 크면 그림자 속
+    //// Bias를 적용하여 Shadow Acne 방지
+    //float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
     
     return Shadow;
 }

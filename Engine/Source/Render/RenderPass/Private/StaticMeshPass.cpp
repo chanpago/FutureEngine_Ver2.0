@@ -55,6 +55,8 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+
+			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
 		}
 	}
 	
