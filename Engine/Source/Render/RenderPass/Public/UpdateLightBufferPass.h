@@ -22,6 +22,8 @@ public:
 
 	FMatrix GetLightViewMatrix() const { return LightViewP; }
 	FMatrix GetLightProjectionMatrix() const { return LightProjP; }
+	FMatrix GetCachedEyeView() const { return CachedEyeView; }
+	FMatrix GetCachedEyeProj() const { return CachedEyeProj; }
 
 private:
 	void BakeShadowMap(FRenderingContext& Context);
@@ -39,4 +41,6 @@ private:
 
 	FMatrix LightViewP;
 	FMatrix LightProjP;
+	FMatrix CachedEyeView;  // PSM 베이킹 시 사용한 카메라 V_e
+	FMatrix CachedEyeProj;  // PSM 베이킹 시 사용한 카메라 P_e
 };

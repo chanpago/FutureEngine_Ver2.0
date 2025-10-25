@@ -4,6 +4,7 @@
 #include "Editor/Public/Editor.h"
 #include "Level/Public/Level.h"
 #include "Component/Public/ActorComponent.h"
+#include "Render/Renderer/Public/Renderer.h"
 #include "ImGui/imgui.h"
 
 IMPLEMENT_CLASS(UDirectionalLightComponentWidget, UWidget)
@@ -46,7 +47,20 @@ void UDirectionalLightComponentWidget::RenderWidget()
     }
     if (ImGui::IsItemHovered())
     {
-        ImGui::SetTooltip("라이트를 켜고 끕니다.\n끄면 조명 계산에서 제외됩니다.\n(Outliner O/X와는 별개)");
+        ImGui::SetTooltip("라이트를 켜고 끉니다.\n끄면 조명 계산에서 제외됩니다.\n(Outliner O/X와는 별개)");
+    }
+    
+    // 그림자 캐스팅 체크박스
+    bool bCastShadows = DirectionalLightComponent->GetCastShadows();
+    if (ImGui::Checkbox("Cast Shadows (PSM)", &bCastShadows))
+    {
+        DirectionalLightComponent->SetCastShadows(bCastShadows);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("그림자 렌더링 방식 선택:\n"
+                          "☐ OFF: Simple Ortho Shadow (LVP) - 안정적, 카메라 독립\n"
+                          "☑ ON: PSM (Perspective Shadow Maps) - 카메라 종속, 높은 정밀도");
     }
     // Light Color
     FVector LightColor = DirectionalLightComponent->GetLightColor();
@@ -109,6 +123,24 @@ void UDirectionalLightComponentWidget::RenderWidget()
     }
     
     ImGui::PopStyleColor(3);
+
+    // Shadow Map Preview
+    if (ImGui::CollapsingHeader("Shadow Map Preview"))
+    {
+        ID3D11ShaderResourceView* ShadowSRV = URenderer::GetInstance().GetDeviceResources()->GetDirectionalShadowMapSRV();
+        if (ShadowSRV)
+        {
+            // 표시 크기와 스케일 조절 UI
+            static int Size = 256;
+            ImGui::SliderInt("Size", &Size, 64, 1024);
+            ImGui::Image((ImTextureID)ShadowSRV, ImVec2((float)Size, (float)Size));
+            ImGui::Text("Resolution: 2048 x 2048 (Depth)" );
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.8f,0.5f,0.5f,1.0f), "Shadow map SRV not available.");
+        }
+    }
 
     ImGui::Separator();
 }

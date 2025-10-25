@@ -46,6 +46,8 @@ struct FVector
 	 */
 	FVector operator/(const FVector& InOther) const;
 
+	FVector operator/(const float& InOther) const;
+	
 	/**
 	 * @brief 자신의 벡터에서 배율을 곱한 백테를 반환하는 함수
 	 */

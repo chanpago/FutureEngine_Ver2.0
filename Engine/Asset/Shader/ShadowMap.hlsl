@@ -14,6 +14,10 @@ cbuffer PSMConstants  : register(b6)
     row_major float4x4 EyeProj;        // P_e
     row_major float4x4 LightViewP;     // V_L'
     row_major float4x4 LightProjP;     // P_L'
+    float4 ShadowParams;               // x: bias, ...
+    uint   bInvertedLight;
+    uint   bUsePSM;                    // 0: Simple Ortho, 1: PSM
+    uint2  _pad_;
 }
 
 // Input/Output Structures
@@ -31,30 +35,31 @@ struct VS_OUTPUT
     float4 Position : SV_POSITION;
 };
 
-// Vertex Shader
-VS_OUTPUT Shadow_VS(VS_INPUT input)
+// Vertex Shader (entry: mainVS)
+VS_OUTPUT mainVS(VS_INPUT input)
 {
     VS_OUTPUT o;
-
-    // 1) world
-    float4 w = mul(float4(input.Position, 1.0f), World);
-
-    // 2) eye clip
-    float4 s = mul(mul(w, EyeView), EyeProj);
-
-    // 3) perspective divide -> PSM(NDC) space
-    float3 psm = s.xyz / max(s.w, 1e-8f);
-
-    // 4) PSM -> light clip
-    float4 clipS = mul(mul(float4(psm, 1.0f), LightViewP), LightProjP);
-
-    o.Position = clipS; // HW가 clipS.z/clipS.w를 depth로 사용
+    float4 worldPos = mul(float4(input.Position, 1.0f), World);
+    
+    if (bUsePSM == 1)
+    {
+        // PSM: World→Camera NDC→Light
+        float4 eyeClip = mul(mul(worldPos, EyeView), EyeProj);
+        float3 psm = eyeClip.xyz / max(eyeClip.w, 1e-8f);  // PSM 공간(NDC)
+        o.Position = mul(mul(float4(psm, 1.0), LightViewP), LightProjP);
+    }
+    else
+    {
+        // Simple Ortho: World→Light 직접 변환
+        o.Position = mul(mul(worldPos, LightViewP), LightProjP);
+    }
+    
     return o;
 }
 
 // Pixel Shader
 // 기본 Depth Shadow Map (나중에 VSM 추가 가능)
-void mainPS(PS_INPUT input)
+void mainPS()
 {
     // Depth는 자동으로 Depth Buffer에 기록
     // Pixel Shader에서 특별히 할 일이 없음

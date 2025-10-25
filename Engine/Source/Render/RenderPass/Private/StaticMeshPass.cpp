@@ -53,8 +53,9 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		curVS->Release();
 	}
 	
-	// Set a default sampler to slot 0 to ensure one is always bound
+	// Set default samplers: s0=wrap, s1=shadow(point+clamp)
 	Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+	Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetShadowSampler());
 
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
@@ -68,8 +69,9 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{
 			FShadowMapConstants ShadowMapConsts;
-			ShadowMapConsts.EyeView = Context.CurrentCamera->GetCameraViewMatrix();
-			ShadowMapConsts.EyeProj = Context.CurrentCamera->GetCameraProjectionMatrix();
+			// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
+			ShadowMapConsts.EyeView = UpdateLightBufferPass->GetCachedEyeView();
+			ShadowMapConsts.EyeProj = UpdateLightBufferPass->GetCachedEyeProj();
 			ShadowMapConsts.LightViewP = UpdateLightBufferPass->GetLightViewMatrix();
 			ShadowMapConsts.LightProjP = UpdateLightBufferPass->GetLightProjectionMatrix();
 			ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);

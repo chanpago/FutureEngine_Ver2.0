@@ -203,9 +203,10 @@ Texture2D NormalTexture : register(t3);
 Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
-// 섀도우맵 텍셀 크기(PCF 오프셋용).
+// 섬도우맵 텍셀 크기(PCF 오프셋용).
 static const float2 gShadowTexel = float2(1.0/2048.0, 1.0/2048.0);
 SamplerState SamplerWrap : register(s0);
+SamplerState SamplerShadow : register(s1);  // Point+Clamp for shadow map
 
 
 // Material flags
@@ -249,17 +250,13 @@ struct PS_OUTPUT
 // 반환: 가시도(1=조명 통과, 0=완전 그림자)
 float PSM_Visibility(float3 worldPos)
 {
-    // PSM 변환
-    // 1. 월드 -> 카메라 클립 공간
-    float4 cameraClipPos = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
-    // 2. 원근 나누기 (클립 -> NDC/PSM 공간)
-    float3 psmPos = cameraClipPos.xyz / max(cameraClipPos.w, 1e-8f);
-    //float3 ndc = cameraClipPos.xyz / cameraClipPos.w;        
-    // 3. PSM 공간 -> 라이트 클립 공간
-    float4 sh = mul(mul(float4(psmPos, 1.0), LightViewP), LightProjP);
+    // ★ DEBUG: PSM 비활성화 - World→Light 직접 변환
+    float4 sh = mul(mul(float4(worldPos, 1.0), LightViewP), LightProjP);
 
-    // Clip→NDC→UV, 깊이
-    float2 uv = sh.xy / sh.w * 0.5 + 0.5;
+    // Clip→NDC→UV, 깊이 (DirectX UV: Y축 반전 필요)
+    float2 uv;
+    uv.x = sh.x / sh.w * 0.5 + 0.5;     // NDC X: [-1,1] → UV U: [0,1]
+    uv.y = 0.5 - sh.y / sh.w * 0.5;     // NDC Y: [-1(bottom),+1(top)] → UV V: [1(bottom),0(top)]
     float  z  = sh.z  / sh.w;
 
     // 경계 밖이면 취향에 따라 1(밝게) 또는 0(그림자) 처리. 보통 1이 안전.
@@ -272,7 +269,7 @@ float PSM_Visibility(float3 worldPos)
         [unroll] for (int dx=-R; dx<=R; ++dx)
         {
             float2 o  = float2(dx, dy) * gShadowTexel;
-            float  dz = ShadowMapTexture.SampleLevel(SamplerWrap, uv + o, 0).r;
+            float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
 
             // 비교방향: normal (<) vs inverted (>)
             bool lit = (bInvertedLight == 0)
