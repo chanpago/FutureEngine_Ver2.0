@@ -1,5 +1,6 @@
 #pragma once
 #include "Render/RenderPass/Public/RenderPass.h"
+#include "Render/RenderPass/Public/StaticMeshPass.h"
 
 class UDirectionalLightComponent;
 class USpotLightComponent;
@@ -41,6 +42,8 @@ public:
     void SetVertexShader(ID3D11VertexShader* InVS) { ShadowMapVS = InVS; }
     void SetPixelShader(ID3D11PixelShader* InPS) { ShadowMapPS = InPS; }
     void SetInputLayout(ID3D11InputLayout* InLayout) { ShadowMapInputLayout = InLayout; }
+    
+    const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
 private:
     // Shadow Map Shaders
@@ -59,4 +62,6 @@ private:
 
     // Light 전용 Camera 상수 버퍼 (ConstantBufferCamera를 덮어쓰지 않기 위해)
     ID3D11Buffer* LightCameraConstantBuffer = nullptr;
+
+    FShadowMapConstants CascadedShadowMapConstants;
 };

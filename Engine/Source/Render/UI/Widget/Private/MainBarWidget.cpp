@@ -497,6 +497,23 @@ void UMainBarWidget::RenderShowFlagsMenu()
 			CurrentLevel->SetShowFlags(ShowFlags);
 		}
 
+		// VSM 표시 옵션
+		bool bEnableCSM = (ShowFlags & EEngineShowFlags::SF_CSM) != 0;
+		if (ImGui::MenuItem("CSM 적용", nullptr, bEnableCSM))
+		{
+			if (bEnableCSM)
+			{
+				ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_CSM);
+				UE_LOG("MainBarWidget: CSM 비활성화");
+			}
+			else
+			{
+				ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_CSM);
+				UE_LOG("MainBarWidget: CSN 활성화");
+			}
+			CurrentLevel->SetShowFlags(ShowFlags);
+		}
+
 		ImGui::EndMenu();
 	}
 }

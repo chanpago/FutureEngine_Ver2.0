@@ -83,102 +83,116 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     ID3D11DepthStencilView* OriginalDSV = nullptr;
     DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
 
-    // Directional Light Shadow Map 렌더링
-    for (auto Light : Context.DirectionalLights)
+    const bool bUseCSM = (Context.ShowFlags & EEngineShowFlags::SF_CSM) != 0;
+    
+    if (bUseCSM)
     {
-        if (!Light) continue;
-
-        // Shadow Map DSV/RTV 설정 및 클리어
-        ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
-        ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
-        // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
-        ID3D11ShaderResourceView* NullSRV = nullptr;
-        DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
-        DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // RTV는 필요 없음, DSV만 사용
-        const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f }; // VSM Default
-        DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
-        DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
-        
-        // Shadow Map Viewport 설정
-        DeviceContext->RSSetViewports(1, &DirectionalShadowViewport);
-        
-        // Light View Matrix 계산
-        FVector LightDir = Light->GetForwardVector().GetNormalized();
-        FVector LightPos = -LightDir * 500.0f;  // Light를 충분히 멀리 배치 (Directional Light는 무한 멀리에 있다고 가정)
-        FVector TargetPos = LightPos + LightDir;
-        FVector UpVector(0, 0, 1);  // 월드 Up 방향
-        
-        // Light의 Forward가 거의 수직이면 Up 벡터 조정
-        if (std::abs(LightDir.Z) > 0.99f)
-        {
-            UpVector = FVector(0, 1, 0);
-        }
-        
-        // View Matrix: LookAt 직접 계산
-        FVector ZAxis = (TargetPos - LightPos).GetNormalized();  // Forward
-        FVector XAxis = (UpVector.FVector::Cross(ZAxis)).GetNormalized();  // Right
-        FVector YAxis = (ZAxis.FVector::Cross(XAxis));  // Up
-        
-        FMatrix LightViewMatrix = FMatrix::Identity();
-        LightViewMatrix.Data[0][0] = XAxis.X;
-        LightViewMatrix.Data[0][1] = YAxis.X;
-        LightViewMatrix.Data[0][2] = ZAxis.X;
-        LightViewMatrix.Data[0][3] = 0.0f;
-        
-        LightViewMatrix.Data[1][0] = XAxis.Y;
-        LightViewMatrix.Data[1][1] = YAxis.Y;
-        LightViewMatrix.Data[1][2] = ZAxis.Y;
-        LightViewMatrix.Data[1][3] = 0.0f;
-        
-        LightViewMatrix.Data[2][0] = XAxis.Z;
-        LightViewMatrix.Data[2][1] = YAxis.Z;
-        LightViewMatrix.Data[2][2] = ZAxis.Z;
-        LightViewMatrix.Data[2][3] = 0.0f;
-        
-        LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
-        LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
-        LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
-        LightViewMatrix.Data[3][3] = 1.0f;
-        
-        // Projection Matrix: Orthographic 직접 계산 (Directional Light는 병렬 광선)
-        float OrthoWidth = 300.0f;   // 그림자 범위 너비
-        float OrthoHeight = 300.0f;  // 그림자 범위 높이
-        float NearZ = 0.1f;
-        float FarZ = 1000.0f;
-        
-        FMatrix LightProjMatrix = FMatrix::Identity();
-        LightProjMatrix.Data[0][0] = 2.0f / OrthoWidth;
-        LightProjMatrix.Data[1][1] = 2.0f / OrthoHeight;
-        LightProjMatrix.Data[2][2] = 1.0f / (FarZ - NearZ);
-        LightProjMatrix.Data[3][2] = -NearZ / (FarZ - NearZ);
-        LightProjMatrix.Data[3][3] = 1.0f;
-        
-        // StaticMeshPass에서 사용할 수 있도록 저장
-        this->LightViewMatrix = LightViewMatrix;
-        this->LightProjectionMatrix = LightProjMatrix;
-        
-        // Light Camera 상수 버퍼 업데이트
-        FCameraConstants LightCameraConstants;
-        LightCameraConstants.View = LightViewMatrix;
-        LightCameraConstants.Projection = LightProjMatrix;
-        LightCameraConstants.ViewWorldLocation = LightPos;
-        LightCameraConstants.NearClip = NearZ;
-        LightCameraConstants.FarClip = FarZ;
-        
-        // 전용 Light Camera 상수 버퍼에 업데이트 (원본 카메라 버퍼를 건드리지 않음)
-        FRenderResourceFactory::UpdateConstantBufferData(LightCameraConstantBuffer, LightCameraConstants);
-        
-        // 모든 Static Mesh를 Light 관점에서 렌더링
-        for (auto MeshComp : Context.StaticMeshes)
-        {
-            if (!MeshComp || !MeshComp->IsVisible()) continue;
-            RenderPrimitive(MeshComp);
-        }
-        
-        // 현재는 하나의 Directional Light만 처리 (나중에 여러 개 지원 가능)
-        break;
+        UE_LOG("CSM Path Enabled: Generate Cascaded Shadow Maps.");
     }
+    else
+    {
+        // Directional Light Shadow Map 렌더링
+        for (auto Light : Context.DirectionalLights)
+        {
+            if (!Light) continue;
 
+            // Shadow Map DSV/RTV 설정 및 클리어
+            ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
+            ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
+            // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
+            ID3D11ShaderResourceView* NullSRV = nullptr;
+            DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+            DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // RTV는 필요 없음, DSV만 사용
+            const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f }; // VSM Default
+            DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
+            DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        
+            // Shadow Map Viewport 설정
+            DeviceContext->RSSetViewports(1, &DirectionalShadowViewport);
+        
+            // Light View Matrix 계산
+            FVector LightDir = Light->GetForwardVector().GetNormalized();
+            FVector LightPos = -LightDir * 500.0f;  // Light를 충분히 멀리 배치 (Directional Light는 무한 멀리에 있다고 가정)
+            FVector TargetPos = LightPos + LightDir;
+            FVector UpVector(0, 0, 1);  // 월드 Up 방향
+        
+            // Light의 Forward가 거의 수직이면 Up 벡터 조정
+            if (std::abs(LightDir.Z) > 0.99f)
+            {
+                UpVector = FVector(0, 1, 0);
+            }
+        
+            // View Matrix: LookAt 직접 계산
+            FVector ZAxis = (TargetPos - LightPos).GetNormalized();  // Forward
+            FVector XAxis = (UpVector.FVector::Cross(ZAxis)).GetNormalized();  // Right
+            FVector YAxis = (ZAxis.FVector::Cross(XAxis));  // Up
+        
+            FMatrix LightViewMatrix = FMatrix::Identity();
+            LightViewMatrix.Data[0][0] = XAxis.X;
+            LightViewMatrix.Data[0][1] = YAxis.X;
+            LightViewMatrix.Data[0][2] = ZAxis.X;
+            LightViewMatrix.Data[0][3] = 0.0f;
+        
+            LightViewMatrix.Data[1][0] = XAxis.Y;
+            LightViewMatrix.Data[1][1] = YAxis.Y;
+            LightViewMatrix.Data[1][2] = ZAxis.Y;
+            LightViewMatrix.Data[1][3] = 0.0f;
+        
+            LightViewMatrix.Data[2][0] = XAxis.Z;
+            LightViewMatrix.Data[2][1] = YAxis.Z;
+            LightViewMatrix.Data[2][2] = ZAxis.Z;
+            LightViewMatrix.Data[2][3] = 0.0f;
+        
+            LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
+            LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
+            LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
+            LightViewMatrix.Data[3][3] = 1.0f;
+        
+            // Projection Matrix: Orthographic 직접 계산 (Directional Light는 병렬 광선)
+            float OrthoWidth = 300.0f;   // 그림자 범위 너비
+            float OrthoHeight = 300.0f;  // 그림자 범위 높이
+            float NearZ = 0.1f;
+            float FarZ = 1000.0f;
+        
+            FMatrix LightProjMatrix = FMatrix::Identity();
+            LightProjMatrix.Data[0][0] = 2.0f / OrthoWidth;
+            LightProjMatrix.Data[1][1] = 2.0f / OrthoHeight;
+            LightProjMatrix.Data[2][2] = 1.0f / (FarZ - NearZ);
+            LightProjMatrix.Data[3][2] = -NearZ / (FarZ - NearZ);
+            LightProjMatrix.Data[3][3] = 1.0f;
+        
+            // StaticMeshPass에서 사용할 수 있도록 저장
+            this->LightViewMatrix = LightViewMatrix;
+            this->LightProjectionMatrix = LightProjMatrix;
+        
+            // Light Camera 상수 버퍼 업데이트
+            FCameraConstants LightCameraConstants;
+            LightCameraConstants.View = LightViewMatrix;
+            LightCameraConstants.Projection = LightProjMatrix;
+            LightCameraConstants.ViewWorldLocation = LightPos;
+            LightCameraConstants.NearClip = NearZ;
+            LightCameraConstants.FarClip = FarZ;
+        
+            // 전용 Light Camera 상수 버퍼에 업데이트 (원본 카메라 버퍼를 건드리지 않음)
+            FRenderResourceFactory::UpdateConstantBufferData(LightCameraConstantBuffer, LightCameraConstants);
+        
+            // 모든 Static Mesh를 Light 관점에서 렌더링
+            for (auto MeshComp : Context.StaticMeshes)
+            {
+                if (!MeshComp || !MeshComp->IsVisible()) continue;
+                RenderPrimitive(MeshComp);
+            }
+        
+            // 현재는 하나의 Directional Light만 처리 (나중에 여러 개 지원 가능)
+            break;
+        }
+
+        // Generate mipmaps for VSM color shadow map (for smoother filtering)
+        if (auto* ColorSRV = URenderer::GetInstance().GetDeviceResources()->GetDirectionalShadowMapColorSRV())
+        {
+            DeviceContext->GenerateMips(ColorSRV);
+        }
+    }
     //// ============================================================================
     //// TODO: Spot Light Shadow Map 렌더링 (나중에 구현)
     //// ============================================================================
@@ -271,12 +285,6 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     
     // 원본 Render Targets 복원
     DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
-
-    // Generate mipmaps for VSM color shadow map (for smoother filtering)
-    if (auto* ColorSRV = URenderer::GetInstance().GetDeviceResources()->GetDirectionalShadowMapColorSRV())
-    {
-        DeviceContext->GenerateMips(ColorSRV);
-    }
     
     // OMGetRenderTargets가 AddRef를 호출했으므로 Release 필요
     //for (int i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)

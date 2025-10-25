@@ -25,6 +25,10 @@ public:
 	// Shadow Map Resources
 	void CreateShadowMapResources();
 	void ReleaseShadowMapResources();
+
+	// CSM Resources
+	void CreateCascadedShadowMap();
+	void ReleaseCascadedShadowMap();
 	
 	// Direct2D/DirectWrite
 	void CreateFactories();
@@ -52,6 +56,9 @@ public:
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
 	ID3D11Texture2D* GetSceneColorTexture() const {return SceneColorTexture; }
+
+	ID3D11ShaderResourceView* GetCascadedShadowMapSRV() const { return CascadedShadowMapSRV; }
+	ID3D11DepthStencilView* GetCascadedShadowMapDSV(int CascadeIndex) const;
 	
 	const D3D11_VIEWPORT& GetViewportInfo() const { return ViewportInfo; }
 	uint32 GetWidth() const { return Width; }
@@ -97,6 +104,11 @@ private:
 	ID3D11RenderTargetView* DirectionalShadowMapColorRTV = nullptr;
 	ID3D11ShaderResourceView* DirectionalShadowMapColorSRV = nullptr;
 	ID3D11Texture2D* DirectionalShadowMapColorTexture = nullptr;
+
+	// CSM Resources
+	ID3D11Texture2D* CascadedShadowMapTexture = nullptr;
+	ID3D11ShaderResourceView* CascadedShadowMapSRV = nullptr;
+	ID3D11DepthStencilView* CascadedShadowMapDSVs[MAX_CASCADES] = { nullptr };
 	
 	D3D11_VIEWPORT ViewportInfo = {};
 

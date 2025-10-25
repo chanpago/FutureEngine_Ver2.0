@@ -24,12 +24,14 @@ void UDeviceResources::Create(HWND InWindowHandle)
 	CreateDepthBuffer();
 	CreateSceneColorTarget();
 	CreateShadowMapResources();  // TODO: 임시 비활성화
+	CreateCascadedShadowMap();
 	CreateFactories();
 }
 
 void UDeviceResources::Release()
 {
 	ReleaseFactories();
+	ReleaseCascadedShadowMap();
 	ReleaseShadowMapResources();
 	ReleaseSceneColorTarget();
 	ReleaseFrameBuffer();
@@ -353,7 +355,14 @@ void UDeviceResources::ReleaseDepthBuffer()
 	}
 }
 
-
+ID3D11DepthStencilView* UDeviceResources::GetCascadedShadowMapDSV(int CascadeIndex) const
+{
+	if (CascadeIndex >= 0 && CascadeIndex < MAX_CASCADES)
+	{
+		return CascadedShadowMapDSVs[CascadeIndex];
+	}
+	return nullptr;
+}
 
 void UDeviceResources::UpdateViewport(float InMenuBarHeight)
 {
@@ -376,6 +385,59 @@ void UDeviceResources::UpdateViewport(float InMenuBarHeight)
 
 	Width = SwapChainDescription.BufferDesc.Width;
 	Height = SwapChainDescription.BufferDesc.Height;
+}
+
+void UDeviceResources::CreateCascadedShadowMap()
+{
+	// Create Texture2DArray
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = 2048;
+	texDesc.Height = 2048;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = MAX_CASCADES;
+	texDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+
+	HRESULT hr = Device->CreateTexture2D(&texDesc, nullptr, &CascadedShadowMapTexture);
+	if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM Texture2DArray"); return; }
+
+	// Create Shader Resource View
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+	srvDesc.Texture2DArray.MostDetailedMip = 0;
+	srvDesc.Texture2DArray.MipLevels = 1;
+	srvDesc.Texture2DArray.FirstArraySlice = 0;
+	srvDesc.Texture2DArray.ArraySize = MAX_CASCADES;
+
+	hr = Device->CreateShaderResourceView(CascadedShadowMapTexture, &srvDesc, &CascadedShadowMapSRV);
+	if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM SRV"); return; }
+
+	// Create Depth Stencil View
+	for (int i = 0; i < MAX_CASCADES; i++)
+	{
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+		dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+		dsvDesc.Texture2DArray.MipSlice = 0;
+		dsvDesc.Texture2DArray.FirstArraySlice = i;
+		dsvDesc.Texture2DArray.ArraySize = 1;
+
+		hr = Device->CreateDepthStencilView(CascadedShadowMapTexture, &dsvDesc, &CascadedShadowMapDSVs[i]);
+		if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM DSV for slice %d", i); }
+	}
+}
+
+void UDeviceResources::ReleaseCascadedShadowMap()
+{
+	for (int i = 0; i < MAX_CASCADES; i++)
+	{
+		SafeRelease(CascadedShadowMapDSVs[i]);
+	}
+	SafeRelease(CascadedShadowMapSRV);
+	SafeRelease(CascadedShadowMapTexture);
 }
 
 void UDeviceResources::CreateFactories()
