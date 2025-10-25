@@ -169,10 +169,25 @@ struct FGlobalLightConstant
 	FDirectionalLightInfo Directional;
 };
 
-struct FShadowMapConstants
+struct alignas(16) FShadowMapConstants
 {
-	FMatrix LightViewMatrix;
-	FMatrix LightProjectionMatrix;
-	float ShadowBias;
-	FVector Padding;
+	FMatrix EyeView;        // 64
+	FMatrix EyeProj;        // 64
+	FMatrix LightViewP;     // 64
+	FMatrix LightProjP;     // 64
+	FVector4 ShadowParams;  // 16  (x=bias, y=slopeScale 등)
+	uint32   bInvertedLight;// 4
+	uint32   _pad_[3];      // 12 → 16B 정렬
+};
+
+
+struct FPSMConstants
+{
+	FMatrix EyeView;       // V_e
+	FMatrix EyeProj;       // P_e
+	FMatrix LightViewP;    // V_L'
+	FMatrix LightProjP;    // P_L'
+	FVector4 ShadowParams; // x: depthBias, y: (reserved)
+	uint32  bInvertedLight;// 0: normal, 1: inverted (방향광에서는 보통 0)
+	uint32  _pad_[3];
 };

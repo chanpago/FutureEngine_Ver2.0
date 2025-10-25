@@ -101,10 +101,13 @@ cbuffer LightCountInfo : register(b5)
 
 cbuffer ShadowMapConstants : register(b6)
 {
-    row_major float4x4 LightView;
-    row_major float4x4 LightProjection;
-    float ShadowBias;
-    float3 ShadowPadding;
+    row_major float4x4 EyeView;       // V_e
+    row_major float4x4 EyeProj;       // P_e
+    row_major float4x4 LightViewP;    // V_L'
+    row_major float4x4 LightProjP;    // P_L'
+    float4 ShadowParams;              // x: constBias, y: unused, z: unused, w: unused
+    uint   bInvertedLight;            // 0: normal, 1: inverted
+    uint3  _pad_;
 };
 
 
@@ -113,6 +116,7 @@ StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
+
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -199,6 +203,8 @@ Texture2D NormalTexture : register(t3);
 Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
+// 섀도우맵 텍셀 크기(PCF 오프셋용).
+static const float2 gShadowTexel = float2(1.0/2048.0, 1.0/2048.0);
 SamplerState SamplerWrap : register(s0);
 
 
@@ -240,44 +246,56 @@ struct PS_OUTPUT
     float4 NormalData : SV_Target1;
 };
 
-// Shadow Map 샘플링 함수
-float CalculateShadowFactor(float3 WorldPos)
+// 반환: 가시도(1=조명 통과, 0=완전 그림자)
+float PSM_Visibility(float3 worldPos)
 {
-    // 안전 검사: Light View/Projection Matrix가 Identity면 Shadow 없음
-    // (이는 Shadow Map이 아직 렌더링되지 않았음을 의미)
-    if (abs(LightView[0][0] - 1.0f) < 0.001f && abs(LightView[1][1] - 1.0f) < 0.001f)
-    {
-        return 1.0f;  // Shadow 없음
-    }
+    // PSM 변환
+    // 1. 월드 -> 카메라 클립 공간
+    float4 cameraClipPos = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
+    // 2. 원근 나누기 (클립 -> NDC/PSM 공간)
+    float3 psmPos = cameraClipPos.xyz / max(cameraClipPos.w, 1e-8f);
+    //float3 ndc = cameraClipPos.xyz / cameraClipPos.w;        
+    // 3. PSM 공간 -> 라이트 클립 공간
+    float4 sh = mul(mul(float4(psmPos, 1.0), LightViewP), LightProjP);
+
+    // Clip→NDC→UV, 깊이
+    float2 uv = sh.xy / sh.w * 0.5 + 0.5;
+    float  z  = sh.z  / sh.w;
+
+    // 경계 밖이면 취향에 따라 1(밝게) 또는 0(그림자) 처리. 보통 1이 안전.
+    if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
+
+    // 2) 수동 PCF (3x3). 필요시 5x5로 확장 가능.
+    const int R = 1;
+    float sum = 0.0;
+    [unroll] for (int dy=-R; dy<=R; ++dy)
+        [unroll] for (int dx=-R; dx<=R; ++dx)
+        {
+            float2 o  = float2(dx, dy) * gShadowTexel;
+            float  dz = ShadowMapTexture.SampleLevel(SamplerWrap, uv + o, 0).r;
+
+            // 비교방향: normal (<) vs inverted (>)
+            bool lit = (bInvertedLight == 0)
+         ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
+         : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
+            sum += lit ? 1.0 : 0.0;
+        }
+/*
+pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “식별자 이름” 문제. HLSL(특히 FX 문법 인식)에서 pass는 예약어로 취급되는 경우가 있어서 변수 이름으로 쓰면 파서가 에러
+우연찮게 vs로 한번보자는 생각이들어서 봤었는데, vs는 여기에 빨간줄 뜨더라.. 갓 vs..
+이거 때문에 3시간 날렸다.. 찾기도 어려운 HLSL 조심 또 조심....
+ */
+
     
-    // World Position을 Light 공간으로 변환
-    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView);
-    LightSpacePos = mul(LightSpacePos, LightProjection);
-    
-    // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
-    LightSpacePos.xyz /= LightSpacePos.w;
-    
-    // NDC [-1,1] -> Texture UV [0,1] 변환
-    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-    ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
-    
-    // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
-    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-        return 1.0f;
-    
-    // 현재 픽셀의 Light 공간 Depth
-    float CurrentDepth = LightSpacePos.z;
-    
-    // Shadow Map에서 Depth 샘플링 (Point Filtering)
-    float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-    
-    // Shadow 테스트: CurrentDepth가 ShadowMapDepth보다 크면 그림자 속
-    // Bias를 적용하여 Shadow Acne 방지
-    float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-    
-    return Shadow;
+    float taps = (2*R+1)*(2*R+1);
+    return sum / taps;  // 1=통과(밝음), 0=모두 가려짐
 }
 
+// 기존 코드가 호출하는 CalculateShadowFactor를 PSM으로 매핑
+inline float CalculateShadowFactor(float3 WorldPosition)
+{
+    return PSM_Visibility(WorldPosition);
+}
 
 // Safe Normalize Util Functions
 float2 SafeNormalize2(float2 v)
@@ -589,6 +607,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     //ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
     // 2. Directional Light (Shadow Map 적용)
     float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    //float ShadowFactor = 1.0;  // 강제 밝게
     FIllumination DirectionalIllum = CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation);
     DirectionalIllum.Diffuse *= ShadowFactor;
     DirectionalIllum.Specular *= ShadowFactor;

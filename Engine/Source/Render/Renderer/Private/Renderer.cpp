@@ -61,6 +61,9 @@ void URenderer::Init(HWND InWindowHandle)
 	CreateConstantBuffers();
 	CreateFXAAShader();
 	CreateStaticMeshShader();
+	UE_LOG_INFO("UberLit VS(Lambert)=%p  PS(Lambert)=%p", UberLitVertexShader, UberLitPixelShader);
+	UE_LOG_INFO("UberLit VS(Blinn-phong)=%p  PS(Blinn-phong)=%p", UberLitVertexShader, UberLitPixelShaderBlinnPhong);
+	UE_LOG_INFO("UberLit VS(Gouraud)=%p PS(Gouraud)=%p", UberLitVertexShaderGouraud, UberLitPixelShaderGouraud);
 	CreateGizmoShader();
 	CreateClusteredRenderingGrid();
 	CreateShadowMapShader();
@@ -329,6 +332,7 @@ void URenderer::CreateStaticMeshShader()
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(FNormalVertex, TexCoord), D3D11_INPUT_PER_VERTEX_DATA, 0	},
 		{ "TANGENT",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(FNormalVertex, Tangent),  D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
+
 	
 	// Compile Lambert variant (default)
 	TArray<D3D_SHADER_MACRO> LambertMacros = {

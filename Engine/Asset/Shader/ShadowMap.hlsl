@@ -8,13 +8,12 @@ cbuffer Model : register(b0)
     row_major float4x4 World;
 }
 
-cbuffer LightCamera : register(b1)
+cbuffer PSMConstants  : register(b6)
 {
-    row_major float4x4 LightView;
-    row_major float4x4 LightProjection;
-    float3 LightWorldLocation;
-    float NearClip;
-    float FarClip;
+    row_major float4x4 EyeView;        // V_e
+    row_major float4x4 EyeProj;        // P_e
+    row_major float4x4 LightViewP;     // V_L'
+    row_major float4x4 LightProjP;     // P_L'
 }
 
 // Input/Output Structures
@@ -27,30 +26,30 @@ struct VS_INPUT
     float4 Tangent : TANGENT;
 };
 
-struct PS_INPUT
+struct VS_OUTPUT
 {
     float4 Position : SV_POSITION;
-    float Depth : TEXCOORD0;  // Linear depth for VSM
 };
 
 // Vertex Shader
-PS_INPUT mainVS(VS_INPUT input)
+VS_OUTPUT Shadow_VS(VS_INPUT input)
 {
-    PS_INPUT output;
-    
-    // World Space로 변환
-    float4 WorldPos = mul(float4(input.Position, 1.0f), World);
-    
-    // Light View Space로 변환
-    float4 LightViewPos = mul(WorldPos, LightView);
-    
-    // Light Projection Space로 변환
-    output.Position = mul(LightViewPos, LightProjection);
-    
-    // Linear depth 저장 (VSM용)
-    output.Depth = output.Position.z / output.Position.w;
-    
-    return output;
+    VS_OUTPUT o;
+
+    // 1) world
+    float4 w = mul(float4(input.Position, 1.0f), World);
+
+    // 2) eye clip
+    float4 s = mul(mul(w, EyeView), EyeProj);
+
+    // 3) perspective divide -> PSM(NDC) space
+    float3 psm = s.xyz / max(s.w, 1e-8f);
+
+    // 4) PSM -> light clip
+    float4 clipS = mul(mul(float4(psm, 1.0f), LightViewP), LightProjP);
+
+    o.Position = clipS; // HW가 clipS.z/clipS.w를 depth로 사용
+    return o;
 }
 
 // Pixel Shader

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Render/RenderPass/Public/StaticMeshPass.h"
 #include "Component/Mesh/Public/StaticMeshComponent.h"
+#include "Editor/Public/Camera.h"
 #include "Render/Renderer/Public/Pipeline.h"
 #include "Render/Renderer/Public/RenderResourceFactory.h"
 #include "Texture/Public/Texture.h"
@@ -29,11 +30,29 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		VS = Renderer.GetVertexShader(Context.ViewMode);
 		PS = Renderer.GetPixelShader(Context.ViewMode);
 	}
+
+	// ✅ 널 가드 + 로그 + 안전 종료(또는 폴백)
+	if (!VS) {
+		UE_LOG_ERROR("StaticMeshPass: VS null for ViewMode=%d", (int)Context.ViewMode);
+		return; // 혹은 VS = GetDefaultUberVS();
+	}
+	if (!PS) {
+		UE_LOG_ERROR("StaticMeshPass: PS null for ViewMode=%d", (int)Context.ViewMode);
+		return; // 혹은 PS = GetDefaultUberPS();
+	}
 	
 	ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState(RenderState);
 	FPipelineInfo PipelineInfo = { InputLayout, VS, RS, DS, PS, nullptr, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST };
 	Pipeline->UpdatePipeline(PipelineInfo);
 
+	// ✅ 정말로 바인드됐는지 최종 확인(디버그용)
+	{
+		ID3D11VertexShader* curVS=nullptr; UINT cnt=0;
+		Renderer.GetDeviceContext()->VSGetShader(&curVS, nullptr, &cnt);
+		if (!curVS) { UE_LOG_ERROR("StaticMeshPass: VS not bound after UpdatePipeline"); return; }
+		curVS->Release();
+	}
+	
 	// Set a default sampler to slot 0 to ensure one is always bound
 	Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
 
@@ -49,10 +68,15 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{
 			FShadowMapConstants ShadowMapConsts;
-			ShadowMapConsts.LightViewMatrix = UpdateLightBufferPass->GetLightViewMatrix();
-			ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
-			ShadowMapConsts.ShadowBias = 0.005f;  // Shadow acne 방지용 bias
+			ShadowMapConsts.EyeView = Context.CurrentCamera->GetCameraViewMatrix();
+			ShadowMapConsts.EyeProj = Context.CurrentCamera->GetCameraProjectionMatrix();
+			ShadowMapConsts.LightViewP = UpdateLightBufferPass->GetLightViewMatrix();
+			ShadowMapConsts.LightProjP = UpdateLightBufferPass->GetLightProjectionMatrix();
+			ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);
+			ShadowMapConsts.bInvertedLight = 0;
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
+			
+			// 바인딩 (PS b6 / t10)
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
 		}
