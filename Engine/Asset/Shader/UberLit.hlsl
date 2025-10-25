@@ -117,6 +117,7 @@ StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
+Texture2DArray CascadedShadowMapTexture : register(t10);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -245,6 +246,27 @@ struct PS_OUTPUT
     float4 NormalData : SV_Target1;
 };
 
+float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
+{
+    // VSM: configurable smoothing via mip bias
+    static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
+    static const float VSM_BleedReduction = 0.2f; // 0..1, higher reduces light bleeding
+
+    // Clamp depth into [0,1] and apply small bias
+    float z = saturate(CurrentDepth - ShadowBias);
+    float m1 = Moments.x;
+    float m2 = Moments.y;
+
+    // Variance and Chebyshev upper bound
+    float variance = max(m2 - m1 * m1, VSM_MinVariance);
+    float d = z - m1;
+    float pMax = saturate(variance / (variance + d * d));
+
+    // Light bleeding reduction
+    float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+    return visibility;
+}
+
 // Shadow Map 샘플링 함수
 float CalculateShadowFactor(float3 WorldPos)
 {
@@ -284,28 +306,12 @@ float CalculateShadowFactor(float3 WorldPos)
     {
         // VSM: configurable smoothing via mip bias
         static const float VSM_MipBias = 1.25f;        // Increase for softer shadows
-        static const float VSM_MinVariance = 1e-5f;    // Floors variance to reduce hard edges
-        static const float VSM_BleedReduction = 0.2f;  // 0..1, higher reduces light bleeding
 
         // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
         float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
-
-        // Clamp depth into [0,1] and apply small bias
-        float z = saturate(CurrentDepth - ShadowBias);
-        float m1 = Moments.x;
-        float m2 = Moments.y;
-
-        // Variance and Chebyshev upper bound
-        float variance = max(m2 - m1 * m1, VSM_MinVariance);
-        float d = z - m1;
-        float pMax = saturate(variance / (variance + d * d));
-
-        // Light bleeding reduction
-        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
-        return visibility;
+        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
     }
 }
-
 
 // Safe Normalize Util Functions
 float2 SafeNormalize2(float2 v)

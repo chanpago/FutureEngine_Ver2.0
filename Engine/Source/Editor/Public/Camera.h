@@ -49,6 +49,7 @@ public:
 	 */
 	const FCameraConstants& GetFViewProjConstants() const { return CameraConstants; }
 	const FCameraConstants GetFViewProjConstantsInverse() const;
+	void GetFrustumCorners(FVector OutCorners[8], float InNear, float InFar) const;
 
 	FRay ConvertToWorldRay(float NdcX, float NdcY) const;
 

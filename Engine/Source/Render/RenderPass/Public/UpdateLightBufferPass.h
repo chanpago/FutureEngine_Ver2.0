@@ -43,6 +43,8 @@ public:
     void SetPixelShader(ID3D11PixelShader* InPS) { ShadowMapPS = InPS; }
     void SetInputLayout(ID3D11InputLayout* InLayout) { ShadowMapInputLayout = InLayout; }
     
+    // Calculate Cascade split distance
+    void CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera);
     const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
 private:

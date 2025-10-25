@@ -54,17 +54,25 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
 		if (bUseCSM)
 		{
+			// Get pre-computed CSM constants from LightBufferPass
+			ShadowMapConsts = UpdateLightBufferPass->GetCascadedShadowMapConstants();
+			// Specify the use of CSM
+			ShadowMapConsts.UseCSM = 1.0f;
+
 			if (bUseVSM)
 			{
 				// CSM + VSM
 				ShadowMapConsts.UseVSM = 1.0f;
 				ShadowMapConsts.ShadowBias = 0.0015f;  // VSM needs less bias
+				// TODO: needs Texture2DArray resource of VSM format (color)
+				// bShouldBindShadows = false;		// Temporarily disabled
 			}
 			else
 			{
 				// Only CSM
 				ShadowMapConsts.UseVSM = 0.0f;
 				ShadowMapConsts.ShadowBias = 0.005f;  // VSM needs less bias
+				ShadowMapSRV = Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
 			}
 		}
 		else
@@ -85,6 +93,10 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+		}
+		else
+		{
+			Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
 		}
 	}
 	

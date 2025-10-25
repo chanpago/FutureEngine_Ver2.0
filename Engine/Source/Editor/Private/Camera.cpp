@@ -261,6 +261,50 @@ const FCameraConstants UCamera::GetFViewProjConstantsInverse() const
 	return Result;
 }
 
+void UCamera::GetFrustumCorners(FVector OutCorners[8], float InNear, float InFar) const
+{
+	// Inverse of View
+	FMatrix R = FMatrix(Right, Up, Forward);
+	FMatrix T = FMatrix::TranslationMatrix(RelativeLocation);
+	FMatrix InvView = R * T;
+
+	// Inverse of Projection
+	const float f = 1.0f / tanf(FovY * 0.5f);
+	const float sx = f / Aspect;
+	const float sy = f;
+
+	FMatrix InvProj = FMatrix::Identity();
+	InvProj.Data[0][0] = 1.0f / sx;
+	InvProj.Data[1][1] = 1.0f / sy;
+	InvProj.Data[2][2] = 0.0f;
+	InvProj.Data[2][3] = (InNear - InFar) / (InNear * InFar);
+	InvProj.Data[3][2] = 1.0f;
+	InvProj.Data[3][3] = InFar / (InNear * InFar);
+
+	FMatrix InvViewProj = InvProj * InvView;
+
+	FVector NdcCorners[8] =
+	{
+		FVector(-1.0f, 1.0f, 0.0f), // Near-Top-Left
+		FVector(1.0f, 1.0f, 0.0f), // Near-Top-Right
+		FVector(1.0f,-1.0f, 0.0f), // Near-Bottom-Right
+		FVector(-1.0f,-1.0f, 0.0f), // Near-Bottom-Left
+		FVector(-1.0f, 1.0f, 1.0f), // Far-Top-Left
+		FVector(1.0f, 1.0f, 1.0f), // Far-Top-Right
+		FVector(1.0f,-1.0f, 1.0f), // Far-Bottom-Right
+		FVector(-1.0f,-1.0f, 1.0f)  // Far-Bottom-Left
+	};
+
+	for (int i = 0; i < 8; i++)
+	{
+		FVector4 WorldPos = FVector4(NdcCorners[i], 1.0f) * InvViewProj;
+		WorldPos.X /= WorldPos.W;
+		WorldPos.Y /= WorldPos.W;
+		WorldPos.Z /= WorldPos.W;
+		OutCorners[i] = WorldPos;
+	}
+}
+
 FRay UCamera::ConvertToWorldRay(float NdcX, float NdcY) const
 {
 	/* *
