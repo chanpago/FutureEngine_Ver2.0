@@ -125,7 +125,9 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
             {
                 // Set light position
                 FVector LightDir = Light->GetForwardVector().GetNormalized();
-                float ShadowDistance = 200.0f;
+                float ShadowDistance = 250.0f;
+                /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
+                float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
                 FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
 
                 // light source targets the center of slice
@@ -441,7 +443,7 @@ void FUpdateLightBufferPass::CalculateCascadeSplits(FVector4& OutSplits, const U
     const float FarClip = InCamera->GetFarZ();
     const float ClipRange = FarClip - NearClip;
 
-    const float lambda = 0.5f;
+    const float lambda = 0.8f;
 
     for (int i = 0; i < MAX_CASCADES; i++)
     {
