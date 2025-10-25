@@ -31,6 +31,7 @@
 #include "Render/RenderPass/Public/ClusteredRenderingGridPass.h"
 
 #include "Render/RenderPass/Public/SceneDepthPass.h"
+#include "Render/RenderPass/Public/UpdateLightBufferPass.h"
 #include "Render/UI/Overlay/Public/StatOverlay.h"
 #include "Manager/UI/Public/ViewportManager.h"
 #include "Global/Octree.h"
@@ -62,8 +63,14 @@ void URenderer::Init(HWND InWindowHandle)
 	CreateStaticMeshShader();
 	CreateGizmoShader();
 	CreateClusteredRenderingGrid();
+	CreateShadowMapShader();
 
 	//ViewportClient->InitializeLayout(DeviceResources->GetViewportInfo());
+
+	//Shadow Map 베이킹 Pass (가장 먼저 실행)
+	FUpdateLightBufferPass* UpdateLightBufferPass = new FUpdateLightBufferPass(Pipeline, ConstantBufferViewProj, ConstantBufferModels,
+		ShadowMapVS, ShadowMapPS, ShadowMapInputLayout);
+	RenderPasses.push_back(UpdateLightBufferPass);
 
 	LightPass = new FLightPass(Pipeline, ConstantBufferViewProj, GizmoInputLayout, GizmoVS, GizmoPS, DefaultDepthStencilState);
 	RenderPasses.push_back(LightPass);
@@ -373,6 +380,42 @@ void URenderer::CreateGizmoShader()
 	FRenderResourceFactory::CreatePixelShader(ShaderFilePathString, &GizmoPS);
 
 	RegisterShaderReloadCache(ShaderPath, ShaderUsage::GIZMO);
+}
+
+void URenderer::CreateShadowMapShader()
+{
+	const std::wstring ShaderFilePathString = L"Asset/Shader/ShadowMap.hlsl";
+	const std::filesystem::path ShaderPath(ShaderFilePathString);
+
+	// Shadow Map용 Input Layout 정의
+	TArray<D3D11_INPUT_ELEMENT_DESC> ShadowMapLayout =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FNormalVertex, Position), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FNormalVertex, Normal), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(FNormalVertex, Color), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(FNormalVertex, TexCoord), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(FNormalVertex, Tangent), D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+
+	// Vertex Shader 및 Input Layout 생성
+	FRenderResourceFactory::CreateVertexShaderAndInputLayout(
+		ShaderFilePathString,
+		ShadowMapLayout,
+		&ShadowMapVS,
+		&ShadowMapInputLayout,
+		"mainVS",
+		nullptr
+	);
+
+	// Pixel Shader 생성 (VSM용)
+	FRenderResourceFactory::CreatePixelShader(
+		ShaderFilePathString,
+		&ShadowMapPS,
+		"mainPS",
+		nullptr
+	);
+
+	RegisterShaderReloadCache(ShaderPath, ShaderUsage::STATICMESH);
 }
 
 void URenderer::CreateClusteredRenderingGrid()
@@ -686,13 +729,28 @@ void URenderer::Update()
 void URenderer::RenderBegin() const
 {
 	auto* RenderTargetView = DeviceResources->GetRenderTargetView();
+	if (!RenderTargetView)
+	{
+		UE_LOG_ERROR("RenderBegin: RenderTargetView is null!");
+		return;
+	}
 	GetDeviceContext()->ClearRenderTargetView(RenderTargetView, ClearColor);
 
 	// @TODO: The clear color for the normal buffer should be a specific value (e.g., {0.5, 0.5, 1.0, 1.0})
 	auto* NormalRenderTargetView = DeviceResources->GetNormalRenderTargetView();
+	if (!NormalRenderTargetView)
+	{
+		UE_LOG_ERROR("RenderBegin: NormalRenderTargetView is null!");
+		return;
+	}
 	GetDeviceContext()->ClearRenderTargetView(NormalRenderTargetView, ClearColor);
 
 	auto* DepthStencilView = DeviceResources->GetDepthStencilView();
+	if (!DepthStencilView)
+	{
+		UE_LOG_ERROR("RenderBegin: DepthStencilView is null!");
+		return;
+	}
 	GetDeviceContext()->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
 	// FXAA bool값 변수에 따라서 RTV세팅
@@ -924,6 +982,8 @@ ID3D11VertexShader* URenderer::GetVertexShader(EViewModeIndex ViewModeIndex) con
 	{
 		return TextureVertexShader;
 	}
+	// 기본값 반환 (모든 조건에 해당하지 않을 경우)
+	return UberLitVertexShader;
 }
 
 ID3D11PixelShader* URenderer::GetPixelShader(EViewModeIndex ViewModeIndex) const
@@ -948,6 +1008,8 @@ ID3D11PixelShader* URenderer::GetPixelShader(EViewModeIndex ViewModeIndex) const
 	{
 		return UberLitPixelShaderWorldNormal;
 	}
+	// 기본값 반환 (모든 조건에 해당하지 않을 경우)
+	return UberLitPixelShader;
 }
 
 void URenderer::CreateConstantBuffers()

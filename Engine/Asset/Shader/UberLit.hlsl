@@ -99,11 +99,21 @@ cbuffer LightCountInfo : register(b5)
     float2 Padding;
 };
 
+cbuffer ShadowMapConstants : register(b6)
+{
+    row_major float4x4 LightView;
+    row_major float4x4 LightProjection;
+    float ShadowBias;
+    float UseVSM;
+    float2 ShadowPadding;
+};
+
 
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
+Texture2D ShadowMapTexture : register(t10);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -168,6 +178,7 @@ FSpotLightInfo GetSpotLight(uint LightIdx)
     return SpotLightInfos[LightInfoIdx];
 }
 
+
 cbuffer MaterialConstants : register(b2)
 {
     float4 Ka; // Ambient color
@@ -190,6 +201,8 @@ Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
 SamplerState SamplerWrap : register(s0);
+SamplerState SamplerLinearClamp : register(s1);
+
 
 // Material flags
 #define HAS_DIFFUSE_MAP  (1 << 0) // map_Kd
@@ -228,6 +241,68 @@ struct PS_OUTPUT
     float4 SceneColor : SV_Target0;
     float4 NormalData : SV_Target1;
 };
+
+// Shadow Map 샘플링 함수
+float CalculateShadowFactor(float3 WorldPos)
+{
+    // 안전 검사: Light View/Projection Matrix가 Identity면 Shadow 없음
+    // (이는 Shadow Map이 아직 렌더링되지 않았음을 의미)
+    if (abs(LightView[0][0] - 1.0f) < 0.001f && abs(LightView[1][1] - 1.0f) < 0.001f)
+    {
+        return 1.0f;  // Shadow 없음
+    }
+    
+    // World Position을 Light 공간으로 변환
+    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView);
+    LightSpacePos = mul(LightSpacePos, LightProjection);
+    
+    // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
+    LightSpacePos.xyz /= LightSpacePos.w;
+    
+    // NDC [-1,1] -> Texture UV [0,1] 변환
+    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+    ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
+    
+    // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
+    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+        return 1.0f;
+    
+    // 현재 픽셀의 Light 공간 Depth
+    float CurrentDepth = LightSpacePos.z;
+    
+    if (UseVSM < 0.5f)
+    {
+        // Classic depth compare
+        float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+        float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        return Shadow;
+    }
+    else
+    {
+        // VSM: configurable smoothing via mip bias
+        static const float VSM_MipBias = 1.25f;        // Increase for softer shadows
+        static const float VSM_MinVariance = 1e-5f;    // Floors variance to reduce hard edges
+        static const float VSM_BleedReduction = 0.2f;  // 0..1, higher reduces light bleeding
+
+        // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
+        float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
+
+        // Clamp depth into [0,1] and apply small bias
+        float z = saturate(CurrentDepth - ShadowBias);
+        float m1 = Moments.x;
+        float m2 = Moments.y;
+
+        // Variance and Chebyshev upper bound
+        float variance = max(m2 - m1 * m1, VSM_MinVariance);
+        float d = z - m1;
+        float pMax = saturate(variance / (variance + d * d));
+
+        // Light bleeding reduction
+        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+        return visibility;
+    }
+}
+
 
 // Safe Normalize Util Functions
 float2 SafeNormalize2(float2 v)
@@ -282,6 +357,8 @@ float3x3 Inverse3x3(float3x3 M)
     
     return inv;
 }
+
+
 
 // Lighting Calculation Functions
 float4 CalculateAmbientLight(FAmbientLightInfo info)
@@ -485,6 +562,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     float4 finalPixel = float4(0.0f, 0.0f, 0.0f, 1.0f);
     float2 UV = Input.Tex;
     float3 ShadedWorldNormal = SafeNormalize3(Input.WorldNormal);
+    
     if (MaterialFlags & HAS_NORMAL_MAP)
     {
         ShadedWorldNormal = ComputeNormalMappedWorldNormal(UV, Input.WorldNormal, Input.WorldTangent);
@@ -517,7 +595,13 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
 #if LIGHTING_MODEL_GOURAUD
     // Use pre-calculated vertex lighting; apply diffuse material/texture per-pixel
-    finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + Input.DiffuseLight.rgb * diffuseColor.rgb + Input.SpecularLight.rgb * specularColor.rgb;
+    //finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + Input.DiffuseLight.rgb * diffuseColor.rgb + Input.SpecularLight.rgb * specularColor.rgb;
+
+    // Shadow Map 적용 (Pixel Shader에서 그림자 계산)
+    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    float3 shadedDiffuse = Input.DiffuseLight.rgb * ShadowFactor;
+    float3 shadedSpecular = Input.SpecularLight.rgb * ShadowFactor;
+    finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + shadedDiffuse * diffuseColor.rgb + shadedSpecular * specularColor.rgb;
     
 #elif LIGHTING_MODEL_LAMBERT || LIGHTING_MODEL_BLINNPHONG
     // Calculate lighting in pixel shader
@@ -526,9 +610,17 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
     // 1. Ambient Light
     Illumination.Ambient = CalculateAmbientLight(Ambient);
+
+
+    //ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
+    // 2. Directional Light (Shadow Map 적용)
+    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    FIllumination DirectionalIllum = CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation);
+    DirectionalIllum.Diffuse *= ShadowFactor;
+    DirectionalIllum.Specular *= ShadowFactor;
+    ADD_ILLUM(Illumination, DirectionalIllum);
     
-    // 2. Directional Light
-    ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
+
     
     // 3. Point Lights
     uint LightIndicesOffset = GetLightIndicesOffset(Input.WorldPosition);

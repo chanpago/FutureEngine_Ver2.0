@@ -433,6 +433,7 @@
     <ClInclude Include="Source\Render\RenderPass\Public\SceneDepthPass.h" />
     <ClInclude Include="Source\Render\RenderPass\Public\StaticMeshPass.h" />
     <ClInclude Include="Source\Render\RenderPass\Public\TextPass.h" />
+    <ClInclude Include="Source\Render\RenderPass\Public\UpdateLightBufferPass.h" />
     <ClInclude Include="Source\Render\UI\Factory\Public\UIWindowFactory.h" />
     <ClInclude Include="Source\Render\UI\ImGui\Public\ImGuiHelper.h" />
     <ClInclude Include="Source\Render\UI\Layout\Public\Splitter.h" />
@@ -566,6 +567,10 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ObjViewerDebug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </FxCompile>
+    <FxCompile Include="Asset\Shader\ShadowMap.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </FxCompile>
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
@@ -685,6 +690,7 @@
     <ClCompile Include="Source\Render\RenderPass\Private\SceneDepthPass.cpp" />
     <ClCompile Include="Source\Render\RenderPass\Private\StaticMeshPass.cpp" />
     <ClCompile Include="Source\Render\RenderPass\Private\TextPass.cpp" />
+    <ClCompile Include="Source\Render\RenderPass\Private\UpdateLightBufferPass.cpp" />
     <ClCompile Include="Source\Render\UI\Factory\Private\UIWindowFactory.cpp" />
     <ClCompile Include="Source\Render\UI\ImGui\Private\ImGuiHelper.cpp" />
     <ClCompile Include="Source\Render\UI\Layout\Private\Splitter.cpp" />

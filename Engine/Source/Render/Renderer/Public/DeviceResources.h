@@ -21,6 +21,10 @@ public:
 	// Scene Color Texture, rtv, srv
 	void CreateSceneColorTarget();
 	void ReleaseSceneColorTarget();
+
+	// Shadow Map Resources
+	void CreateShadowMapResources();
+	void ReleaseShadowMapResources();
 	
 	// Direct2D/DirectWrite
 	void CreateFactories();
@@ -37,6 +41,13 @@ public:
 	ID3D11ShaderResourceView* GetNormalSRV() const { return NormalBufferSRV; }
 	ID3D11ShaderResourceView* GetDepthSRV() const { return DepthBufferSRV; }
 	ID3D11ShaderResourceView* GetDepthStencilSRV() const { return DepthStencilSRV; }
+
+	// Shadow Map Getters
+	ID3D11DepthStencilView* GetDirectionalShadowMapDSV() const { return DirectionalShadowMapDSV; }
+	ID3D11ShaderResourceView* GetDirectionalShadowMapSRV() const { return DirectionalShadowMapSRV; }
+	ID3D11RenderTargetView* GetDirectionalShadowMapColorRTV() const { return DirectionalShadowMapColorRTV; }
+	ID3D11ShaderResourceView* GetDirectionalShadowMapColorSRV() const {return DirectionalShadowMapColorSRV; }
+	ID3D11Texture2D* GetDirectionalShadowMapColorTexture() const {return DirectionalShadowMapColorTexture; }
 
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
@@ -78,6 +89,14 @@ private:
 	ID3D11Texture2D* SceneColorTexture = nullptr;
 	ID3D11RenderTargetView* SceneColorTextureRTV = nullptr;
 	ID3D11ShaderResourceView* SceneColorTextureSRV = nullptr;
+
+	// Directional Light Shadow Map
+	ID3D11Texture2D* DirectionalShadowMapTexture = nullptr;
+	ID3D11DepthStencilView* DirectionalShadowMapDSV = nullptr;
+	ID3D11ShaderResourceView* DirectionalShadowMapSRV = nullptr;
+	ID3D11RenderTargetView* DirectionalShadowMapColorRTV = nullptr;
+	ID3D11ShaderResourceView* DirectionalShadowMapColorSRV = nullptr;
+	ID3D11Texture2D* DirectionalShadowMapColorTexture = nullptr;
 	
 	D3D11_VIEWPORT ViewportInfo = {};
 

@@ -1,15 +1,17 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "Render/RenderPass/Public/StaticMeshPass.h"
 #include "Component/Mesh/Public/StaticMeshComponent.h"
 #include "Render/Renderer/Public/Pipeline.h"
 #include "Render/Renderer/Public/RenderResourceFactory.h"
 #include "Texture/Public/Texture.h"
+#include "Render/RenderPass/Public/UpdateLightBufferPass.h"
 
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
 	: FRenderPass(InPipeline, InConstantBufferCamera, InConstantBufferModel), VS(InVS), PS(InPS), InputLayout(InLayout), DS(InDS)
 {
 	ConstantBufferMaterial = FRenderResourceFactory::CreateConstantBuffer<FMaterialConstants>();
+	ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
 }
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
@@ -32,12 +34,34 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	FPipelineInfo PipelineInfo = { InputLayout, VS, RS, DS, PS, nullptr, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST };
 	Pipeline->UpdatePipeline(PipelineInfo);
 
-	// Set a default sampler to slot 0 to ensure one is always bound
-	Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    // Set default samplers: s0 and s1 (linear clamp)
+    Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
 
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
 	Pipeline->SetConstantBuffer(1, EShaderType::PS, ConstantBufferCamera);
+
+	// Shadow Map 상수 버퍼 및 SRV 바인딩 (b6, t10 슬롯)
+	FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
+	if (UpdateLightBufferPass)
+	{
+		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
+		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM
+			? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
+			: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
+		{
+			FShadowMapConstants ShadowMapConsts;
+			ShadowMapConsts.LightViewMatrix = UpdateLightBufferPass->GetLightViewMatrix();
+			ShadowMapConsts.LightProjectionMatrix = UpdateLightBufferPass->GetLightProjectionMatrix();
+			ShadowMapConsts.ShadowBias = bUseVSM ? 0.0015f : 0.005f;  // VSM needs less bias
+			ShadowMapConsts.UseVSM = bUseVSM ? 1.0f : 0.0f;
+			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
+			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
+			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+		}
+	}
 	
 	if (!(Context.ShowFlags & EEngineShowFlags::SF_StaticMesh)) { return; }
 	TArray<UStaticMeshComponent*>& MeshComponents = Context.StaticMeshes;
@@ -177,4 +201,5 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 void FStaticMeshPass::Release()
 {
 	SafeRelease(ConstantBufferMaterial);
+	SafeRelease(ConstantBufferShadowMap);
 }

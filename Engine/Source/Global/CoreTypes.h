@@ -168,3 +168,12 @@ struct FGlobalLightConstant
 	FAmbientLightInfo Ambient;
 	FDirectionalLightInfo Directional;
 };
+
+struct FShadowMapConstants
+{
+	FMatrix LightViewMatrix;
+	FMatrix LightProjectionMatrix;
+	float ShadowBias;
+	float UseVSM; // 0 = depth compare, 1 = VSM
+	FVector2 Padding;
+};

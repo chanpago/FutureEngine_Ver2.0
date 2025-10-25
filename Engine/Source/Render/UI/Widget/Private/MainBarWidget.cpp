@@ -480,6 +480,23 @@ void UMainBarWidget::RenderShowFlagsMenu()
 			CurrentLevel->SetShowFlags(ShowFlags);
 		}
 
+		// VSM 표시 옵션
+		bool bEnableVSM = (ShowFlags & EEngineShowFlags::SF_VSM) != 0;
+		if (ImGui::MenuItem("VSM 적용", nullptr, bEnableVSM))
+		{
+			if (bEnableVSM)
+			{
+				ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_VSM);
+				UE_LOG("MainBarWidget: VSM 비활성화");
+			}
+			else
+			{
+				ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_VSM);
+				UE_LOG("MainBarWidget: VSM 활성화");
+			}
+			CurrentLevel->SetShowFlags(ShowFlags);
+		}
+
 		ImGui::EndMenu();
 	}
 }
