@@ -43,7 +43,11 @@ struct VS_INPUT
 struct VS_OUTPUT
 {
     float4 Position : SV_POSITION;
+    float Depth : TEXCOORD0;  // Linear depth for VSM
 };
+
+
+
 
 //======================================================================
 // Helpers
@@ -151,14 +155,15 @@ VS_OUTPUT mainVS(VS_INPUT input)
     {
         // Simple Ortho: World→Light 직접 변환
         o.Position = mul(mul(worldPos, LightViewP), LightProjP);
+        
     }
-    
+    o.Depth = o.Position.z / o.Position.w;
     return o;
 }
 
 // Pixel Shader
 // 기본 Depth Shadow Map
-float2 mainPS(PS_INPUT input) : SV_Target
+float2 mainPS(VS_OUTPUT input) : SV_Target
 {
     float Depth = saturate(input.Depth);
     float m1 = Depth;

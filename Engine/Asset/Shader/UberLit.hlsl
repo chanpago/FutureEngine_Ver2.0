@@ -291,7 +291,7 @@ float PSM_Visibility(float3 worldPos)
         [unroll] for (int dx=-R; dx<=R; ++dx)
         {
             float2 o  = float2(dx, dy) * gShadowTexel;
-            float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
+            float  dz = ShadowMapTexture.SampleLevel(SamplerPCF, uv + o, 0).r;
 
             // 비교방향: normal (<) vs inverted (>)
             // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
