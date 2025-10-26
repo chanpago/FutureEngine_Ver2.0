@@ -65,6 +65,12 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
 
+			// hard shadow 방식 -> sampler를 default
+			// vsm 방식 -> sampler를 clamp 
+			// pcf 방식 -> sampler를 pcf
+
+			Pipeline->SetSamplerState(0, EShaderType::PS, Renderer.GetDefaultSampler());
+			Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
 			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
 		}
 	}
