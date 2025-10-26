@@ -17,6 +17,9 @@ UDirectionalLightComponent::UDirectionalLightComponent()
 {
     Intensity = 3.0f;
 
+    ShadowBias = 0.001f;
+    ShadowSlopeBias = 1.5f;
+
     UAssetManager& ResourceManager = UAssetManager::GetInstance();
 
     // 화살표 프리미티브 설정 (빛 방향 표시용)

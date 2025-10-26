@@ -132,6 +132,8 @@ struct FVector
 		return NormalizedVector;
 	}
 
+	
+	
 	bool IsZero() const
 	{
 		return X==0.f && Y==0.f && Z==0.f;
@@ -319,6 +321,11 @@ struct alignas(16) FVector4
 		return sqrtf(X * X + Y * Y + Z * Z + W * W);
 	}
 
+	FVector XYZ() const
+	{
+		return FVector(X, Y, Z);
+	}
+	
 	void Normalize()
 	{
 		float Magnitude = this->Length();

@@ -185,10 +185,18 @@ struct FShadowMapConstants
 {
 	FMatrix EyeView;       // V_e
 	FMatrix EyeProj;       // P_e
+	FMatrix EyeViewProjInv;// (P_e * V_e)^(-1)
+	
 	FMatrix LightViewP;    // V_L'
 	FMatrix LightProjP;    // P_L'
+	FMatrix LightViewPInv;  // (V'_L)^(-1)
+	
 	FVector4 ShadowParams; // x: depthBias, y: (reserved)
+	FVector LightDirWS;                   // 월드공간 "표면→광원" 단위벡터
 	uint32  bInvertedLight;// 0: normal, 1: inverted (방향광에서는 보통 0)
-	float	bUsePSM;
-	uint32  _pad_[2];
+
+	FVector4 LightOrthoParams;             // (l, r, b, t)
+	FVector2 ShadowMapSize;                // (Sx, Sy)
+	uint32	bUsePSM;
+	uint32  pad;                      // 8 bytes padding (uint2 in HLSL)
 };

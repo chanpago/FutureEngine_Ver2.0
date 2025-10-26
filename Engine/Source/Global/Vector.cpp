@@ -178,6 +178,8 @@ FVector4 FVector4::operator+(const FVector4& InOtherVector) const
 	);
 }
 
+
+
 FVector4 FVector4::operator*(const FMatrix& InMatrix) const
 {
 	__m128 VecX = _mm_shuffle_ps(V, V, _MM_SHUFFLE(0, 0, 0, 0)); // (X, X, X, X)

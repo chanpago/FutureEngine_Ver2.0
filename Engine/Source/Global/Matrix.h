@@ -112,6 +112,12 @@ struct FMatrix
 
 	FMatrix Transpose() const;
 
+	/**
+	* @brief 역행렬을 반환하는 함수
+	* @return 역행렬 (역행렬이 존재하지 않으면 항등행렬 반환)
+	*/
+	FMatrix Inverse() const;
+
 	FVector GetLocation() const;
 	FVector GetRotation() const;
 	FVector GetScale() const;

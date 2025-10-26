@@ -55,6 +55,7 @@ void UDirectionalLightComponentWidget::RenderWidget()
     if (ImGui::Checkbox("Cast Shadows (PSM)", &bCastShadows))
     {
         DirectionalLightComponent->SetCastShadows(bCastShadows);
+        UE_LOG("bCastShadows Value : %i", bCastShadows);
     }
     if (ImGui::IsItemHovered())
     {

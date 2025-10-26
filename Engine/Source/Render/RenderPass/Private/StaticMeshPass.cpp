@@ -6,6 +6,7 @@
 #include "Render/Renderer/Public/RenderResourceFactory.h"
 #include "Texture/Public/Texture.h"
 #include "Render/RenderPass/Public/UpdateLightBufferPass.h"
+#include "Component/Public/DirectionalLightComponent.h"
 
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
@@ -72,13 +73,26 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
 			ShadowMapConsts.EyeView = UpdateLightBufferPass->GetCachedEyeView();
 			ShadowMapConsts.EyeProj = UpdateLightBufferPass->GetCachedEyeProj();
+			ShadowMapConsts.EyeViewProjInv = (ShadowMapConsts.EyeView * ShadowMapConsts.EyeProj).Inverse();
+
 			ShadowMapConsts.LightViewP = UpdateLightBufferPass->GetLightViewMatrix();
 			ShadowMapConsts.LightProjP = UpdateLightBufferPass->GetLightProjectionMatrix();
+			ShadowMapConsts.LightViewPInv = ShadowMapConsts.LightViewP.Inverse();
+
 			ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);
+			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
+			ShadowMapConsts.LightDirWS = LdirWS;
 			ShadowMapConsts.bInvertedLight = 0;
+
+			ShadowMapConsts.LightOrthoParams = UpdateLightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
+
+			ShadowMapConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
+			ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
-			
+
 			// 바인딩 (PS b6 / t10)
+			Pipeline->SetConstantBuffer(6, EShaderType::VS, ConstantBufferShadowMap); // ← 추가(필요시)
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
 		}

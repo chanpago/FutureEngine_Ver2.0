@@ -101,13 +101,23 @@ cbuffer LightCountInfo : register(b5)
 
 cbuffer ShadowMapConstants : register(b6)
 {
-    row_major float4x4 EyeView;       // V_e
-    row_major float4x4 EyeProj;       // P_e
-    row_major float4x4 LightViewP;    // V_L'
-    row_major float4x4 LightProjP;    // P_L'
-    float4 ShadowParams;              // x: constBias, y: unused, z: unused, w: unused
-    uint   bInvertedLight;            // 0: normal, 1: inverted
-    uint3  _pad_;
+    row_major float4x4 EyeView;        // V_e
+    row_major float4x4 EyeProj;        // P_e
+    row_major float4x4 EyeViewProjInv; // (P_e * V_e)^(-1)
+
+    row_major float4x4 LightViewP;     // V_L'
+    row_major float4x4 LightProjP;     // P_L'
+    row_major float4x4 LightViewPInv;  // (V'_L)^(-1)
+
+    float4 ShadowParams;               // x=bias, y=slopeBias, z=sharpen, w=reserved
+    float3 LightDirWS;                 // 월드공간 광원 방향
+    uint   bInvertedLight;             // 0: normal, 1: inverted
+
+    float4 LightOrthoParams;           // (l, r, b, t)
+    float2 ShadowMapSize;              // (Sx, Sy)
+
+    uint   bUsePSM;                    // 0: Simple Ortho, 1: PSM
+    uint  pad;
 };
 
 
@@ -250,8 +260,18 @@ struct PS_OUTPUT
 // 반환: 가시도(1=조명 통과, 0=완전 그림자)
 float PSM_Visibility(float3 worldPos)
 {
-    // ★ DEBUG: PSM 비활성화 - World→Light 직접 변환
-    float4 sh = mul(mul(float4(worldPos, 1.0), LightViewP), LightProjP);
+    float4 sh;
+
+    if (bUsePSM == 1) {
+        // PSM: World→Eye NDC→Light
+        float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
+        float3 ndc = eyeClip.xyz / max(eyeClip.w, 1e-8f);
+        sh = mul(mul(float4(ndc, 1.0), LightViewP), LightProjP);
+    }
+    else {
+        // Simple Ortho: World→Light 직접 변환
+        sh = mul(mul(float4(worldPos, 1.0), LightViewP), LightProjP);
+    }
 
     // Clip→NDC→UV, 깊이 (DirectX UV: Y축 반전 필요)
     float2 uv;
@@ -272,9 +292,21 @@ float PSM_Visibility(float3 worldPos)
             float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
 
             // 비교방향: normal (<) vs inverted (>)
-            bool lit = (bInvertedLight == 0)
-         ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
-         : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
+            // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
+            // LVP: 샘플링 시 바이어스 적용
+            bool lit;
+            if (bUsePSM == 1)
+            {
+                // PSM: 월드 공간 바이어스가 ShadowMap.hlsl에 이미 적용됨
+                lit = (bInvertedLight == 0) ? (z <= dz) : (z >= dz);
+            }
+            else
+            {
+                // LVP: 샘플링 시 바이어스 적용
+                lit = (bInvertedLight == 0)
+                    ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
+                    : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
+            }
             sum += lit ? 1.0 : 0.0;
         }
 /*
