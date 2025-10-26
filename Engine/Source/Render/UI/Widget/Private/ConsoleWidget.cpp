@@ -3,6 +3,7 @@
 #include "Render/UI/Overlay/Public/StatOverlay.h"
 #include "Utility/Public/UELogParser.h"
 #include "Utility/Public/ScopeCycleCounter.h"
+#include "Level/Public/Level.h"
 
 IMPLEMENT_SINGLETON_CLASS(UConsoleWidget, UWidget)
 
@@ -481,6 +482,14 @@ void UConsoleWidget::ProcessCommand(const char* InCommand)
 		AddLog(ELogType::System, "Terminal Commands:");
 		AddLog(ELogType::Info, "  Any Windows command will be executed directly");
 	}
+	else if (FString CommandLower = InCommand;
+		std::transform(CommandLower.begin(), CommandLower.end(), CommandLower.begin(), ::tolower),
+		CommandLower.length() > 14 && CommandLower.substr(0, 14) == "shadow_filter ")
+	{
+		// "shadow_filter " 다음의 문자열(vsm, pcf, none)을 추출합니다.
+		FString FilterType = CommandLower.substr(14);
+		HandleShadowFilterCommand(FilterType);
+	}
 	else
 	{
 		// 실제 터미널 명령어 실행
@@ -535,6 +544,40 @@ void UConsoleWidget::HandleStatCommand(const FString& StatCommand)
 		AddLog(ELogType::Error, "Unknown stat command: %s", StatCommand.c_str());
 		AddLog(ELogType::Info, "Available: fps, memory, pick, decal, none");
 	}
+}
+
+void UConsoleWidget::HandleShadowFilterCommand(const FString& FilterType)
+{
+	ULevel* CurrentLevel = GWorld->GetLevel();
+	uint64 ShowFlags = CurrentLevel->GetShowFlags();
+	if (!CurrentLevel)
+	{
+		AddLog(ELogType::Error, "Cannot change shadow filter: No level loaded.");
+		return;
+	}
+	ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_VSM);
+	ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_PCF);
+	if (FilterType == "vsm")
+	{
+		ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_VSM);
+		AddLog(ELogType::Success, "Shadow filter set to: VSM");
+	}
+	else if (FilterType == "pcf")
+	{
+		ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_PCF);
+		AddLog(ELogType::Success, "Shadow filter set to: PCF");
+	}
+	else if (FilterType == "none")
+	{
+		AddLog(ELogType::Success, "Shadow filter turned off (Hard Shadows).");
+	}
+	else
+	{
+		AddLog(ELogType::Error, "Unknown shadow filter type: '%s'", FilterType.c_str());
+		AddLog(ELogType::Info, "Available types: vsm, pcf, none");
+		return;
+	}
+	CurrentLevel->SetShowFlags(ShowFlags);
 }
 
 /**
