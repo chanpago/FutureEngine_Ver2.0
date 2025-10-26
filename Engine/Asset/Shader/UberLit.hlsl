@@ -329,6 +329,7 @@ float CalculateShadowFactor(float3 WorldPos)
         float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
         return visibility;
     }
+    return 1.0f;
 }
 
 

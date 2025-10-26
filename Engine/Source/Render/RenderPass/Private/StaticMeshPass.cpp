@@ -48,8 +48,10 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	{
 		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
 		const bool bUsePCF = (Context.ShowFlags & EEngineShowFlags::SF_PCF) != 0;
-		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM || bUsePCF
-			? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
+		
+
+		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM && !(bUsePCF) ?
+			Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
 			: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{

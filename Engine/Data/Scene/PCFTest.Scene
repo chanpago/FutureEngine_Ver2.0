@@ -1,6 +1,6 @@
 {
   "Actors" : {
-    "245" : {
+    "209" : {
       "Components" : [{
           "IsEditorOnly" : "false",
           "IsVisualizationComponent" : "false",
@@ -30,7 +30,7 @@
       "bCanEverTick" : "false",
       "bTickInEditor" : "false"
     },
-    "248" : {
+    "212" : {
       "Components" : [{
           "Intensity" : 3.000000,
           "IsEditorOnly" : "false",
@@ -39,7 +39,7 @@
           "Location" : [0.000000, 0.000000, 9.645974],
           "Name" : "UDirectionalLightComponent_0",
           "ParentName" : "",
-          "Rotation" : [75.069427, 0.000000, -40.634998],
+          "Rotation" : [36.093288, 71.406670, -93.068222],
           "Scale" : [1.000000, 1.000000, 1.000000],
           "Type" : "UDirectionalLightComponent",
           "bLightEnabled" : "true",
@@ -53,7 +53,7 @@
           "Location" : [0.000000, 0.000000, 0.000000],
           "Name" : "UBillBoardComponent_0",
           "ParentName" : "UDirectionalLightComponent_0",
-          "Rotation" : [41.328796, 44.662941, 167.596344],
+          "Rotation" : [67.206436, 31.199921, -107.945610],
           "Scale" : [2.000000, 2.000000, 2.000000],
           "Type" : "UBillBoardComponent",
           "bVisible" : "true"
@@ -69,7 +69,7 @@
           "bVisible" : "true"
         }],
       "Location" : [0.000000, 0.000000, 9.645974],
-      "Rotation" : [75.069427, 0.000000, -40.634998],
+      "Rotation" : [36.093288, 71.406670, -93.068222],
       "Scale" : [1.000000, 1.000000, 1.000000],
       "Type" : "ADirectionalLight",
       "bCanEverTick" : "false",
@@ -87,11 +87,11 @@
           "CameraType" : 1,
           "FarZ" : 1000.000000,
           "FovY" : 90.000000,
-          "Location" : [-13.549246, 13.288098, 19.011242],
+          "Location" : [5.419089, 5.016898, 16.034782],
           "MoveSpeed" : 20.000000,
           "NearZ" : 0.100000,
           "OrthoWidth" : 90.000000,
-          "Rotation" : [0.000000, 29.500006, -93.899979]
+          "Rotation" : [0.000000, 6.900007, -107.700020]
         },
         "Index" : 0,
         "ViewMode" : 2,

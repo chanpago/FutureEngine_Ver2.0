@@ -94,7 +94,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
         ID3D11ShaderResourceView* NullSRV = nullptr;
         DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
-        DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // RTV는 필요 없음, DSV만 사용
+        DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // 색상 정보는 ShadowRTV에, 깊이 정보는 ShadowDSV에 기록, GPU는 두개의 목적지를 모두 출력 대상으로 인식
         const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f }; // VSM Default
         DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
         DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
