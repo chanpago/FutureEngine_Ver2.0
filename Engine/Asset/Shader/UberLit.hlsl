@@ -102,13 +102,25 @@ cbuffer LightCountInfo : register(b5)
 
 cbuffer ShadowMapConstants : register(b6)
 {
-    row_major float4x4 LightView[MAX_CASCADES];
-    row_major float4x4 LightProjection[MAX_CASCADES];
-    float4 CascadeSplits;
-    float ShadowBias;
-    float UseVSM;
-    float UseCSM;
-    float ShadowPadding;
+    row_major float4x4 EyeView;        // V_e
+    row_major float4x4 EyeProj;        // P_e
+    row_major float4x4 EyeViewProjInv; // (P_e * V_e)^(-1)
+
+    row_major float4x4 LightViewP;     // V_L'
+    row_major float4x4 LightProjP;     // P_L'
+    row_major float4x4 LightViewPInv;  // (V'_L)^(-1)
+
+    float4 ShadowParams;               // x=bias, y=slopeBias, z=sharpen, w=reserved
+    float3 LightDirWS;                 // 월드공간 광원 방향
+    uint   bInvertedLight;             // 0: normal, 1: inverted
+
+    float4 LightOrthoParams;           // (l, r, b, t)
+    float2 ShadowMapSize;              // (Sx, Sy)
+
+    uint   bUsePSM;                    // 0: Simple Ortho, 1: PSM
+    uint  bUseVSM;
+    uint  bUsePCF;
+    float3 pad;
 };
 
 
@@ -118,6 +130,7 @@ StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
 Texture2DArray CascadedShadowMapTexture : register(t11);
+
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -204,9 +217,12 @@ Texture2D NormalTexture : register(t3);
 Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
+// 섬도우맵 텍셀 크기(PCF 오프셋용).
+static const float2 gShadowTexel = float2(1.0/2048.0, 1.0/2048.0);
 SamplerState SamplerWrap : register(s0);
 SamplerState SamplerLinearClamp : register(s1);
-
+SamplerState SamplerShadow : register(s2);
+SamplerComparisonState SamplerPCF : register(s10);
 
 // Material flags
 #define HAS_DIFFUSE_MAP  (1 << 0) // map_Kd
@@ -246,73 +262,68 @@ struct PS_OUTPUT
     float4 NormalData : SV_Target1;
 };
 
-float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
+// 반환: 가시도(1=조명 통과, 0=완전 그림자)
+float PSM_Visibility(float3 worldPos)
 {
-    // VSM: configurable smoothing via mip bias
-    static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
-    static const float VSM_BleedReduction = 0.2f; // 0..1, higher reduces light bleeding
+    float4 sh;
 
-    // Clamp depth into [0,1] and apply small bias
-    float z = saturate(CurrentDepth - ShadowBias);
-    float m1 = Moments.x;
-    float m2 = Moments.y;
-
-    // Variance and Chebyshev upper bound
-    float variance = max(m2 - m1 * m1, VSM_MinVariance);
-    float d = z - m1;
-    float pMax = saturate(variance / (variance + d * d));
-
-    // Light bleeding reduction
-    float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
-    return visibility;
-}
-
-// Shadow Map 샘플링 함수
-float CalculateShadowFactor(float3 WorldPos)
-{
-    // 안전 검사: Light View/Projection Matrix가 Identity면 Shadow 없음
-    // (이는 Shadow Map이 아직 렌더링되지 않았음을 의미)
-    if (abs(LightView[0][0][0] - 1.0f) < 0.001f && abs(LightView[0][1][1] - 1.0f) < 0.001f)
-    {
-        return 1.0f;  // Shadow 없음
+    if (bUsePSM == 1) {
+        // PSM: World→Eye NDC→Light
+        float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
+        float3 ndc = eyeClip.xyz / max(eyeClip.w, 1e-8f);
+        sh = mul(mul(float4(ndc, 1.0), LightViewP), LightProjP);
     }
-    
-    // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
-    float ViewDepth = mul(float4(WorldPos, 1.0f), View).z;
-    
-    // 최종 그림자 값 (1.0 = 빛, 0.0 = 그림자)
-    float Shadow = 1.0f;
-    
-    if (UseCSM > 0.5f)  // CSM + VSM(?)
-    {
-        int CascadeIndex = 0;
-        if (ViewDepth > CascadeSplits.x)    CascadeIndex = 1;
-        if (ViewDepth > CascadeSplits.y)    CascadeIndex = 2;
-        if (ViewDepth > CascadeSplits.z)    CascadeIndex = 3;
-        
-        float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView[CascadeIndex]);
-        LightSpacePos = mul(LightSpacePos, LightProjection[CascadeIndex]);
-        LightSpacePos.xyz /= LightSpacePos.w;
-        
-        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-        ShadowUV.y = 1.0f - ShadowUV.y;
-        
-        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-            return 1.0f;
-        
-        float CurrentDepth = LightSpacePos.z;
-        // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
-        // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-        
-        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
-        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
-        Shadow = CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+    else {
+        // Simple Ortho: World→Light 직접 변환
+        sh = mul(mul(float4(worldPos, 1.0), LightViewP), LightProjP);
     }
-    else // only VSM
-    {
-        // World Position을 Light 공간으로 변환
-        float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView[0]);
-        LightSpacePos = mul(LightSpacePos, LightProjection[0]);
+
+    // Clip→NDC→UV, 깊이 (DirectX UV: Y축 반전 필요)
+    float2 uv;
+    uv.x = sh.x / sh.w * 0.5 + 0.5;     // NDC X: [-1,1] → UV U: [0,1]
+    uv.y = 0.5 - sh.y / sh.w * 0.5;     // NDC Y: [-1(bottom),+1(top)] → UV V: [1(bottom),0(top)]
+    float  z  = sh.z  / sh.w;
+
+    // 경계 밖이면 취향에 따라 1(밝게) 또는 0(그림자) 처리. 보통 1이 안전.
+    if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
+
+    // 2) 수동 PCF (3x3). 필요시 5x5로 확장 가능.
+    const int R = 1;
+    float sum = 0.0;
+    [unroll] for (int dy=-R; dy<=R; ++dy)
+        [unroll] for (int dx=-R; dx<=R; ++dx)
+        {
+            float2 o  = float2(dx, dy) * gShadowTexel;
+            float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
+
+            // 비교방향: normal (<) vs inverted (>)
+            // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
+            // LVP: 샘플링 시 바이어스 적용
+            bool lit;
+            if (bUsePSM == 1)
+            {
+                // PSM: 월드 공간 바이어스가 ShadowMap.hlsl에 이미 적용됨
+                lit = (bInvertedLight == 0) ? (z <= dz) : (z >= dz);
+            }
+            else
+            {
+                // LVP: 샘플링 시 바이어스 적용
+                lit = (bInvertedLight == 0)
+                    ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
+                    : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
+            }
+            sum += lit ? 1.0 : 0.0;
+        }
+/*
+pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “식별자 이름” 문제. HLSL(특히 FX 문법 인식)에서 pass는 예약어로 취급되는 경우가 있어서 변수 이름으로 쓰면 파서가 에러
+우연찮게 vs로 한번보자는 생각이들어서 봤었는데, vs는 여기에 빨간줄 뜨더라.. 갓 vs..
+이거 때문에 3시간 날렸다.. 찾기도 어려운 HLSL 조심 또 조심....
+ */
+
+    
+    // World Position을 Light 공간으로 변환
+    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP);
+    LightSpacePos = mul(LightSpacePos, LightProjP);
     
         // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
         LightSpacePos.xyz /= LightSpacePos.w;
@@ -321,31 +332,78 @@ float CalculateShadowFactor(float3 WorldPos)
         float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
         ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
     
-        // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
-        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-            return 1.0f;
-        
-        // 현재 픽셀의 Light 공간 Depth
-        float CurrentDepth = LightSpacePos.z;
-        
-        if (UseVSM < 0.5f)
-        {
-            // Classic depth compare
-            float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-            Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-        }
-        else
-        {
-            // VSM: configurable smoothing via mip bias
-            static const float VSM_MipBias = 1.25f;        // Increase for softer shadows
-
-            // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
-            float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
-            Shadow = CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
-        }
-    }
+    // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
+    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+        return 1.0f;
     
-    return Shadow;
+    // 현재 픽셀의 Light 공간 Depth
+    float CurrentDepth = LightSpacePos.z;
+    
+    if ((bUseVSM < 0.5f && bUsePCF < 0.5f) || (bUseVSM > 0.5f && bUsePCF > 0.5f))
+    {
+        // Classic depth compare
+        float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+        float Shadow = (CurrentDepth - ShadowParams[0]) > ShadowMapDepth ? 0.0f : 1.0f;
+        return Shadow;
+    }
+    else if (bUsePCF > 0.5f)
+    {
+        // 3x3 PCF (Percentage-Closer Filtering)
+        float Shadow = 0.0f;
+        float2 TexelSize;
+        uint Width, Height;
+        ShadowMapTexture.GetDimensions(Width, Height); // 텍스처의 가로, 세로 가져오기
+        TexelSize = 1.0f / float2(Width, Height); // 한 텍셀의 사이즈
+    
+        // 3x3 커널 순회
+        for (int x = -1; x <= 1; ++x)
+        {
+            for (int y = -1; y <= 1; ++y)
+            {
+                float2 Offset = float2(x, y) * TexelSize;
+                // CurrentDepth - bias <= ShadowMapDepth
+                // ShadowUV + Offset에서 읽은 depth와 세번째 인자랑 비교
+                // 세번째 인자가 더 작으면 true -> 1.0 반환 (빛 받음)
+                // 아니라면 false -> 0.0 반환 (그림자)
+     
+                Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowParams[0]);
+            }
+        }
+        // 9개 평균 계산하여 부드러운 그림자 값
+        Shadow /= 9.0f;
+        return Shadow;
+    }
+    else if(bUseVSM > 0.5f)
+    {
+        // VSM: configurable smoothing via mip bias
+        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
+        static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
+        static const float VSM_BleedReduction = 0.2f; // 0..1, higher reduces light bleeding
+
+        // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
+        float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
+
+        // Clamp depth into [0,1] and apply small bias
+        float z = saturate(CurrentDepth - ShadowParams[0]);
+        float m1 = Moments.x;
+        float m2 = Moments.y;
+
+        // Variance and Chebyshev upper bound
+        float variance = max(m2 - m1 * m1, VSM_MinVariance);
+        float d = z - m1;
+        float pMax = saturate(variance / (variance + d * d));
+
+        // Light bleeding reduction
+        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+        return visibility;
+    }
+    return 1.0f;
+}
+
+// 기존 코드가 호출하는 CalculateShadowFactor를 PSM으로 매핑
+inline float CalculateShadowFactor(float3 WorldPosition)
+{
+    return PSM_Visibility(WorldPosition);
 }
 
 // Safe Normalize Util Functions
@@ -659,6 +717,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     //ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
     // 2. Directional Light (Shadow Map 적용)
     float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    //float ShadowFactor = 1.0;  // 강제 밝게
     FIllumination DirectionalIllum = CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation);
     DirectionalIllum.Diffuse *= ShadowFactor;
     DirectionalIllum.Specular *= ShadowFactor;

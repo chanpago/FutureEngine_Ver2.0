@@ -497,7 +497,24 @@ void UMainBarWidget::RenderShowFlagsMenu()
 			CurrentLevel->SetShowFlags(ShowFlags);
 		}
 
-		// VSM 표시 옵션
+		// PCF 표시 옵션
+		bool bEnabledPCF = (ShowFlags & EEngineShowFlags::SF_PCF) != 0;
+		if (ImGui::MenuItem("PCF 적용", nullptr, bEnabledPCF))
+		{
+			if (bEnabledPCF)
+			{
+				ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_PCF);
+				UE_LOG("MainBarWidget: PCF 비활성화");
+			}
+			else
+			{
+				ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_PCF);
+				UE_LOG("MainBarWidget: PCF 활성화"); 
+			}
+			CurrentLevel->SetShowFlags(ShowFlags);
+		}
+
+		// CSM 표시 옵션
 		bool bEnableCSM = (ShowFlags & EEngineShowFlags::SF_CSM) != 0;
 		if (ImGui::MenuItem("CSM 적용", nullptr, bEnableCSM))
 		{

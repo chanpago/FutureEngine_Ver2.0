@@ -527,12 +527,13 @@ void UDeviceResources::CreateShadowMapResources()
 	D3D11_TEXTURE2D_DESC ColorDesc = {};
 	ColorDesc.Width = ShadowMapSize;
 	ColorDesc.Height = ShadowMapSize;
-	ColorDesc.MipLevels = 1;
+	ColorDesc.MipLevels = 0; // 전체 밉맵 체인을 생성하도록 함.
 	ColorDesc.ArraySize = 1;
 	ColorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
 	ColorDesc.SampleDesc.Count = 1;
 	ColorDesc.Usage = D3D11_USAGE_DEFAULT;
 	ColorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+	ColorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS; // 밉맵 자동 생성을 허용하는 플래그
 
 	hr = Device->CreateTexture2D(&ColorDesc, nullptr, &DirectionalShadowMapColorTexture);
 	if (FAILED(hr))

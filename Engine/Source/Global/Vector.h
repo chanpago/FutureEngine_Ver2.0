@@ -46,6 +46,8 @@ struct FVector
 	 */
 	FVector operator/(const FVector& InOther) const;
 
+	FVector operator/(const float& InOther) const;
+	
 	/**
 	 * @brief 자신의 벡터에서 배율을 곱한 백테를 반환하는 함수
 	 */
@@ -135,6 +137,8 @@ struct FVector
 		return NormalizedVector;
 	}
 
+	
+	
 	bool IsZero() const
 	{
 		return X==0.f && Y==0.f && Z==0.f;
@@ -322,6 +326,11 @@ struct alignas(16) FVector4
 		return sqrtf(X * X + Y * Y + Z * Z + W * W);
 	}
 
+	FVector XYZ() const
+	{
+		return FVector(X, Y, Z);
+	}
+	
 	void Normalize()
 	{
 		float Magnitude = this->Length();

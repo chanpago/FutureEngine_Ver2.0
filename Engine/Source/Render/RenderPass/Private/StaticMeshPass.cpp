@@ -1,10 +1,12 @@
 #include "pch.h"
 #include "Render/RenderPass/Public/StaticMeshPass.h"
 #include "Component/Mesh/Public/StaticMeshComponent.h"
+#include "Editor/Public/Camera.h"
 #include "Render/Renderer/Public/Pipeline.h"
 #include "Render/Renderer/Public/RenderResourceFactory.h"
 #include "Texture/Public/Texture.h"
 #include "Render/RenderPass/Public/UpdateLightBufferPass.h"
+#include "Component/Public/DirectionalLightComponent.h"
 
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
@@ -28,14 +30,24 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		VS = Renderer.GetVertexShader(Context.ViewMode);
 		PS = Renderer.GetPixelShader(Context.ViewMode);
 	}
+
+	// ✅ 널 가드 + 로그 + 안전 종료(또는 폴백)
+	if (!VS) {
+		UE_LOG_ERROR("StaticMeshPass: VS null for ViewMode=%d", (int)Context.ViewMode);
+		return; // 혹은 VS = GetDefaultUberVS();
+	}
+	if (!PS) {
+		UE_LOG_ERROR("StaticMeshPass: PS null for ViewMode=%d", (int)Context.ViewMode);
+		return; // 혹은 PS = GetDefaultUberPS();
+	}
 	
 	ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState(RenderState);
 	FPipelineInfo PipelineInfo = { InputLayout, VS, RS, DS, PS, nullptr, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST };
 	Pipeline->UpdatePipeline(PipelineInfo);
 
     // Set default samplers: s0 and s1 (linear clamp)
-    Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
-    Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    //Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    //Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetShadowMapClampSampler());
 
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
@@ -46,65 +58,51 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	if (UpdateLightBufferPass)
 	{
 		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
-		const bool bUseCSM = (Context.ShowFlags & EEngineShowFlags::SF_CSM) != 0;
+		const bool bUsePCF = (Context.ShowFlags & EEngineShowFlags::SF_PCF) != 0;
 		
-		bool bShouldBindShadows = bUseCSM || bUseVSM;
-		ID3D11ShaderResourceView* ShadowMapSRV = nullptr;
-		FShadowMapConstants ShadowMapConsts = {};
 
-		if (bUseCSM)
-		{
-			// Get pre-computed CSM constants from LightBufferPass
-			ShadowMapConsts = UpdateLightBufferPass->GetCascadedShadowMapConstants();
-			// Specify the use of CSM
-			ShadowMapConsts.UseCSM = 1.0f;
-
-			if (bUseVSM)
-			{
-				// CSM + VSM
-				ShadowMapConsts.UseVSM = 1.0f;
-				ShadowMapConsts.ShadowBias = 0.0015f;  // VSM needs less bias
-				// TODO: needs Texture2DArray resource of VSM format (color)
-				// bShouldBindShadows = false;		// Temporarily disabled
-			}
-			else
-			{
-				// Only CSM
-				ShadowMapConsts.UseVSM = 0.0f;
-				ShadowMapConsts.ShadowBias = 0.005f;  // VSM needs less bias
-				ShadowMapSRV = Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
-			}
-		}
-		else
-		{
-			// No CSM
-			ShadowMapConsts.LightViewMatrix[0] = UpdateLightBufferPass->GetLightViewMatrix();
-			ShadowMapConsts.LightProjectionMatrix[0] = UpdateLightBufferPass->GetLightProjectionMatrix();
-			ShadowMapConsts.ShadowBias = bUseVSM ? 0.0015f : 0.005f;  // VSM needs less bias
-			ShadowMapConsts.UseVSM = bUseVSM ? 1.0f : 0.0f;
-
-			ShadowMapSRV = bUseVSM
-				? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
-				: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
-		}
-		
+		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM && !(bUsePCF) ?
+			Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
+			: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{
+			FShadowMapConstants ShadowMapConsts;
+			// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
+			ShadowMapConsts.EyeView = UpdateLightBufferPass->GetCachedEyeView();
+			ShadowMapConsts.EyeProj = UpdateLightBufferPass->GetCachedEyeProj();
+			ShadowMapConsts.EyeViewProjInv = (ShadowMapConsts.EyeView * ShadowMapConsts.EyeProj).Inverse();
+
+			ShadowMapConsts.LightViewP = UpdateLightBufferPass->GetLightViewMatrix();
+			ShadowMapConsts.LightProjP = UpdateLightBufferPass->GetLightProjectionMatrix();
+			ShadowMapConsts.LightViewPInv = ShadowMapConsts.LightViewP.Inverse();
+
+			ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);
+			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
+			ShadowMapConsts.LightDirWS = LdirWS;
+			ShadowMapConsts.bInvertedLight = 0;
+
+			ShadowMapConsts.LightOrthoParams = UpdateLightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
+
+			ShadowMapConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
+			ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+			ShadowMapConsts.bUseVSM = bUseVSM ? 1.0f : 0.0f;
+			ShadowMapConsts.bUsePCF = bUsePCF ? 1.0f : 0.0f;
+			
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
+
+			// 바인딩 (PS b6 / t10)
+			Pipeline->SetConstantBuffer(6, EShaderType::VS, ConstantBufferShadowMap); // ← 추가(필요시)
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
-			if (bUseCSM)
-			{
-				Pipeline->SetShaderResourceView(11, EShaderType::PS, ShadowMapSRV);
-			}
-			else
-			{
-				Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
-			}
-		}
-		else
-		{
-			Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
-			Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
+			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+
+			// hard shadow 방식 -> sampler를 default
+			// vsm 방식 -> sampler를 clamp 
+			// pcf 방식 -> sampler를 pcf
+
+			Pipeline->SetSamplerState(0, EShaderType::PS, Renderer.GetDefaultSampler());
+			Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+			Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
 		}
 	}
 	

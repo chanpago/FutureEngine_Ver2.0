@@ -104,13 +104,8 @@ void UGizmo::RenderGizmo(UCamera* InCamera)
 
 	P.Scale = FVector(RenderScale, RenderScale, RenderScale);
 
-	// 2) 드래그 중에는 나머지 축 유지되는 모드 (회전 후 새로운 로컬 기즈모 보여줌)
 	FQuaternion LocalRot;
-	if (GizmoMode == EGizmoMode::Rotate && !bIsWorld && bIsDragging)
-	{
-		LocalRot = FQuaternion::FromEuler(DragStartActorRotation);
-	}
-	else if (GizmoMode == EGizmoMode::Scale)
+	if (GizmoMode == EGizmoMode::Scale)
 	{
 		LocalRot = TargetComponent->GetWorldRotationAsQuaternion();
 	}

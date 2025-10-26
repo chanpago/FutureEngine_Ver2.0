@@ -61,6 +61,9 @@ void URenderer::Init(HWND InWindowHandle)
 	CreateConstantBuffers();
 	CreateFXAAShader();
 	CreateStaticMeshShader();
+	UE_LOG_INFO("UberLit VS(Lambert)=%p  PS(Lambert)=%p", UberLitVertexShader, UberLitPixelShader);
+	UE_LOG_INFO("UberLit VS(Blinn-phong)=%p  PS(Blinn-phong)=%p", UberLitVertexShader, UberLitPixelShaderBlinnPhong);
+	UE_LOG_INFO("UberLit VS(Gouraud)=%p PS(Gouraud)=%p", UberLitVertexShaderGouraud, UberLitPixelShaderGouraud);
 	CreateGizmoShader();
 	CreateClusteredRenderingGrid();
 	CreateShadowMapShader();
@@ -184,6 +187,7 @@ void URenderer::CreateBlendState()
 
 void URenderer::CreateSamplerState()
 {
+	// Default: Linear + Wrap
 	D3D11_SAMPLER_DESC samplerDesc = {};
 	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
@@ -193,6 +197,17 @@ void URenderer::CreateSamplerState()
 	samplerDesc.MinLOD = 0;
 	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 	GetDevice()->CreateSamplerState(&samplerDesc, &DefaultSampler);
+
+	// Shadow: Point + Clamp (선형보간/외부 UV 방지)
+	D3D11_SAMPLER_DESC shadowDesc = {};
+	shadowDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;  // Point sampling
+	shadowDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+	shadowDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+	shadowDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+	shadowDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	shadowDesc.MinLOD = 0;
+	shadowDesc.MaxLOD = D3D11_FLOAT32_MAX;
+	GetDevice()->CreateSamplerState(&shadowDesc, &ShadowSampler);
 }
 
 void URenderer::RegisterShaderReloadCache(const std::filesystem::path& ShaderPath, ShaderUsage Usage)
@@ -329,6 +344,7 @@ void URenderer::CreateStaticMeshShader()
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(FNormalVertex, TexCoord), D3D11_INPUT_PER_VERTEX_DATA, 0	},
 		{ "TANGENT",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(FNormalVertex, Tangent),  D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
+
 	
 	// Compile Lambert variant (default)
 	TArray<D3D_SHADER_MACRO> LambertMacros = {
@@ -416,6 +432,8 @@ void URenderer::CreateShadowMapShader()
 	);
 
 	RegisterShaderReloadCache(ShaderPath, ShaderUsage::STATICMESH);
+	ShadowMapPCFSampler = FRenderResourceFactory::CreatePCFShadowSamplerState();
+	ShadowMapClampSampler = FRenderResourceFactory::CreateClampShadowSamplerState();
 }
 
 void URenderer::CreateClusteredRenderingGrid()
@@ -657,7 +675,9 @@ void URenderer::ReleaseBlendState()
 
 void URenderer::ReleaseSamplerState()
 {
+	SafeRelease(ShadowMapPCFSampler);
 	SafeRelease(FXAASamplerState);
+	SafeRelease(ShadowSampler);
 	SafeRelease(DefaultSampler);
 }
 

@@ -61,6 +61,11 @@ FVector FVector::operator/(const FVector& InOther) const
 	return { X/InOther.X, Y/InOther.Y, Z/InOther.Z };
 }
 
+FVector FVector::operator/(const float& InOther) const
+{
+	return {X/InOther, Y/InOther, Z/InOther};
+}
+
 /**
  * @brief 자신의 벡터에서 배율을 곱한 백테를 반환하는 함수
  */
@@ -183,6 +188,8 @@ FVector4 FVector4::operator+(const FVector4& InOtherVector) const
 		W + InOtherVector.W
 	);
 }
+
+
 
 FVector4 FVector4::operator*(const FMatrix& InMatrix) const
 {

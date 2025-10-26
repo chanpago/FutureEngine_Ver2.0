@@ -83,11 +83,19 @@ public:
 
     void RefreshVisualizationBillboardBinding();
 
+
+    float GetShadowBias() const  { return ShadowBias; }
+    float GetShadowSlopeBias() const {return ShadowSlopeBias;}
     
 protected:
     void UpdateVisualizationBillboardTint();
 
     UBillBoardComponent* VisualizationBillboard = nullptr;
+
+    float ShadowResolutionScale;
+    float ShadowBias;
+    float ShadowSlopeBias;
+    float ShadowSharpen;
 private:
     
 };

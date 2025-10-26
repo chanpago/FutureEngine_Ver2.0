@@ -51,6 +51,9 @@ public:
 	const FCameraConstants GetFViewProjConstantsInverse() const;
 	void GetFrustumCorners(FVector OutCorners[8], float InNear, float InFar) const;
 
+	FMatrix GetCameraViewMatrix() const {return PerspectiveCameraView; }
+	FMatrix GetCameraProjectionMatrix() const {return PerspectiveCameraProj; }
+	
 	FRay ConvertToWorldRay(float NdcX, float NdcY) const;
 
 	FVector CalculatePlaneNormal(const FVector4& Axis);
@@ -97,6 +100,8 @@ public:
 
 private:
 	FCameraConstants CameraConstants = {};
+	FMatrix PerspectiveCameraView = FMatrix();
+	FMatrix PerspectiveCameraProj = FMatrix();
 	FVector RelativeLocation = {};
 	FVector RelativeRotation = {};
 	FVector Forward = { 1,0,0 };
