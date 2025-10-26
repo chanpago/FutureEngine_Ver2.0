@@ -967,10 +967,10 @@ void URenderer::OnResize(uint32 InWidth, uint32 InHeight) const
 	DeviceResources->ReleaseNormalBuffer();
 	GetDeviceContext()->OMSetRenderTargets(0, nullptr, nullptr);
 
-    if (FAILED(GetSwapChain()->ResizeBuffers(2, InWidth, InHeight, DXGI_FORMAT_UNKNOWN, 0)))
+    HRESULT resizeResult = GetSwapChain()->ResizeBuffers(2, InWidth, InHeight, DXGI_FORMAT_UNKNOWN, 0);
+    if (FAILED(resizeResult))
     {
-        UE_LOG("OnResize Failed");
-        return;
+        UE_LOG_ERROR("OnResize: ResizeBuffers failed (hr=0x%08X). Restoring previous render targets.", resizeResult);
     }
 
 	DeviceResources->UpdateViewport();
@@ -979,10 +979,17 @@ void URenderer::OnResize(uint32 InWidth, uint32 InHeight) const
 	DeviceResources->CreateDepthBuffer();
 	DeviceResources->CreateNormalBuffer();
 
-    ID3D11RenderTargetView* targetView = bFXAAEnabled
+    ID3D11RenderTargetView* primaryTarget = bFXAAEnabled
         ? DeviceResources->GetSceneColorRenderTargetView()
         : DeviceResources->GetRenderTargetView();
-    ID3D11RenderTargetView* targetViews[] = { targetView };
+
+    if (!primaryTarget)
+    {
+        UE_LOG_ERROR("OnResize: Failed to recreate primary render target view.");
+        return;
+    }
+
+    ID3D11RenderTargetView* targetViews[] = { primaryTarget };
     GetDeviceContext()->OMSetRenderTargets(1, targetViews, DeviceResources->GetDepthStencilView());
 }
 
@@ -1045,3 +1052,4 @@ void URenderer::ReleaseConstantBuffers()
 	SafeRelease(ConstantBufferColor);
 	SafeRelease(ConstantBufferViewProj);
 }
+

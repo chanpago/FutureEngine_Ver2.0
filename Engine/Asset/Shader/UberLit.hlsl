@@ -266,10 +266,19 @@ float PSM_Visibility(float3 worldPos)
     float4 sh;
 
     if (bUsePSM == 1) {
-        // PSM: World→Eye NDC→Light
+        // PSM: World → Camera NDC → World (CameraWarp) → Light
+        // Step 1: World → Camera Clip Space
         float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
+
+        // Step 2: Camera Clip → NDC (perspective divide - warping)
         float3 ndc = eyeClip.xyz / max(eyeClip.w, 1e-8f);
-        sh = mul(mul(float4(ndc, 1.0), LightViewP), LightProjP);
+
+        // Step 3: NDC → World (CameraWarp = inverse camera projection)
+        float4 worldFromNDC = mul(float4(ndc, 1.0), EyeViewProjInv);
+        worldFromNDC = worldFromNDC / max(worldFromNDC.w, 1e-8f);
+
+        // Step 4: World → Light View/Proj
+        sh = mul(mul(float4(worldFromNDC.xyz, 1.0), LightViewP), LightProjP);
     }
     else {
         // Simple Ortho: World→Light 직접 변환

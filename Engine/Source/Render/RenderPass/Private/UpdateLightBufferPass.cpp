@@ -115,6 +115,14 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         // Shadow Map DSV 설정 및 클리어
         ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
         ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
+
+        // Null 체크: Shadow Map 리소스가 생성되지 않았으면 early return
+        if (!ShadowDSV || !ShadowRTV)
+        {
+            UE_LOG_ERROR("Shadow Map resources not initialized! DSV=%p, RTV=%p", ShadowDSV, ShadowRTV);
+            return;
+        }
+
         // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
         ID3D11ShaderResourceView* NullSRV = nullptr;
         DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
@@ -277,6 +285,8 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                     ndcMax.X = std::max(ndcMax.X, ndc.X);
                     ndcMax.Y = std::max(ndcMax.Y, ndc.Y);
                     ndcMax.Z = std::max(ndcMax.Z, ndc.Z);
+                    UE_LOG("ndcMin.X : %f  ndcMax.X : %f   ndcMin.Y : %f  ndcMax.Y : %f    ndcMin.Z : %f  ndcMax.Z : %f",
+                        ndcMin.X,ndcMax.X,ndcMin.Y,ndcMax.Y,ndcMin.Z,ndcMax.Z);
                 }
             };
 
@@ -330,28 +340,59 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                                     FMatrix& OutV, FMatrix& OutP, FVector4& OutLTRB,
                                     float& OutNear, float& OutFar)
         {
-            // 월드→뷰 방향 변환 (행벡터, w=0)
-            FVector Lv = NormalizeSafe( FMatrix::VectorMultiply(FVector4(LightDirWorld,0.0f), CameraView).XYZ() );
+            // PSM: NDC 박스를 World Space로 변환하기 위한 역행렬 계산
+            FMatrix CameraProjInv = CameraProj.Inverse();
+            FMatrix CameraViewInv = CameraView.Inverse();
 
-            FVector center = (ndcMin + ndcMax) * 0.5f;
-            float   diag   = (ndcMax - ndcMin).Length();
-            float   eyeDist= std::max(0.25f, diag);
-            FVector Eye    = center - Lv * eyeDist;
-            FVector At     = center;
-
-            FMatrix Vlp = BuildLookAtRowLH(Eye, At, FVector(0,0,1));
-
-            // NDC 박스 8코너를 Vlp로 변환 후 직교 경계 산출
-            float l=+FLT_MAX, b=+FLT_MAX, n=+FLT_MAX;
-            float r=-FLT_MAX, t=-FLT_MAX, f=-FLT_MAX;
-            FVector c[8]={
+            // NDC 박스 8코너를 World Space로 변환
+            FVector worldCorners[8];
+            FVector ndcCorners[8]={
                 {ndcMin.X,ndcMin.Y,ndcMin.Z},{ndcMax.X,ndcMin.Y,ndcMin.Z},
                 {ndcMin.X,ndcMax.Y,ndcMin.Z},{ndcMax.X,ndcMax.Y,ndcMin.Z},
                 {ndcMin.X,ndcMin.Y,ndcMax.Z},{ndcMax.X,ndcMin.Y,ndcMax.Z},
                 {ndcMin.X,ndcMax.Y,ndcMax.Z},{ndcMax.X,ndcMax.Y,ndcMax.Z}
             };
+
             for(int i=0;i<8;++i){
-                FVector4 v = FMatrix::VectorMultiply(FVector4(c[i],1.0f), Vlp); // NDC→light-view
+                // NDC → Camera Clip Space (homogeneous coordinates)
+                FVector4 clipSpace = FVector4(ndcCorners[i], 1.0f);
+
+                // Camera Clip → Camera View Space (역 Projection)
+                FVector4 viewSpace = FMatrix::VectorMultiply(clipSpace, CameraProjInv);
+                viewSpace = viewSpace / viewSpace.W;  // Perspective divide
+
+                // Camera View → World Space (역 View)
+                FVector4 worldSpace = FMatrix::VectorMultiply(FVector4(viewSpace.X, viewSpace.Y, viewSpace.Z, 1.0f), CameraViewInv);
+                worldCorners[i] = FVector(worldSpace.X, worldSpace.Y, worldSpace.Z);
+            }
+
+            // World Space에서 박스 중심 계산
+            FVector worldCenter(0,0,0);
+            for(int i=0;i<8;++i){
+                worldCenter = worldCenter + worldCorners[i];
+            }
+            worldCenter = worldCenter / 8.0f;
+
+            // World Space에서 박스 대각선 길이 계산
+            float diag = 0.0f;
+            for(int i=0;i<8;++i){
+                float dist = (worldCorners[i] - worldCenter).Length();
+                diag = std::max(diag, dist);
+            }
+            diag *= 2.0f; // 대각선 전체 길이
+
+            // Light View Matrix 생성 (World Space 기준)
+            float eyeDist = std::max(0.25f, diag);
+            FVector Eye = worldCenter - LightDirWorld * eyeDist;
+            FVector At = worldCenter;
+            FMatrix Vlp = BuildLookAtRowLH(Eye, At, FVector(0,0,1));
+
+            // World Space 코너들을 Light View로 변환 후 직교 경계 산출
+            float l=+FLT_MAX, b=+FLT_MAX, n=+FLT_MAX;
+            float r=-FLT_MAX, t=-FLT_MAX, f=-FLT_MAX;
+
+            for(int i=0;i<8;++i){
+                FVector4 v = FMatrix::VectorMultiply(FVector4(worldCorners[i], 1.0f), Vlp);
                 l = std::min(l, v.X); r = std::max(r, v.X);
                 b = std::min(b, v.Y); t = std::max(t, v.Y);
                 n = std::min(n, v.Z); f = std::max(f, v.Z);

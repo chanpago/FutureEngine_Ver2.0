@@ -144,12 +144,19 @@ VS_OUTPUT mainVS(VS_INPUT input)
         float3 PbiasedWS = worldPos.xyz + LightDirWS * biasDist;
         float4 worldBiased = float4(PbiasedWS, 1.0);
 
-        // --- PSM 변환: World → Camera clip → NDC → Light view/proj ---
+        // --- PSM 변환: World → Camera NDC → World (CameraWarp) → Light view/proj ---
+        // Step 1: World → Camera Clip Space
         float4 eyeClip = mul(mul(worldBiased, EyeView), EyeProj);
-        float3 camNDC  = eyeClip.xyz / max(1e-6, eyeClip.w);
-        float4 ndcPos  = float4(camNDC, 1.0);
 
-        o.Position = mul(mul(ndcPos, LightViewP), LightProjP);
+        // Step 2: Camera Clip → NDC (perspective divide - warping happens here!)
+        float3 camNDC = eyeClip.xyz / max(1e-6, eyeClip.w);
+
+        // Step 3: NDC → World (CameraWarp = inverse camera projection)
+        float4 worldFromNDC = mul(float4(camNDC, 1.0), EyeViewProjInv);
+        worldFromNDC = worldFromNDC / max(1e-6, worldFromNDC.w);
+
+        // Step 4: World → Light View/Proj
+        o.Position = mul(mul(float4(worldFromNDC.xyz, 1.0), LightViewP), LightProjP);
     }
     else
     {
