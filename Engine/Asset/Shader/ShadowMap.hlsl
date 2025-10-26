@@ -117,9 +117,21 @@ VS_OUTPUT mainVS(VS_INPUT input)
         float4 camClip_pre = mul(mul(worldPos, EyeView), EyeProj);
         float  w_cam       = max(1e-6, camClip_pre.w);
 
+        float biasDist = 0.0f;
         // 월드 텍셀 길이 근사
-        float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
-        float biasDist = a + b * L_texel;
+        if (bUsePSM == 0)
+        {
+            float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
+            biasDist = a + b * L_texel;
+        }
+        else if (bUsePSM == 1)
+        {
+            float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
+
+            // ★ L_texel에 상한선 설정
+            L_texel = min(L_texel, 1.0);  // 최대 1 unit으로 제한
+            biasDist = a + b * L_texel;
+        }
 
         // 표면→광원 방향으로 전진(PSM 권장)
         float3 PbiasedWS = worldPos.xyz + LightDirWS * biasDist;

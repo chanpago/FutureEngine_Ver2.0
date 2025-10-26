@@ -18,7 +18,7 @@ UDirectionalLightComponent::UDirectionalLightComponent()
     Intensity = 3.0f;
 
     ShadowBias = 0.001f;
-    ShadowSlopeBias = 1.5f;
+    ShadowSlopeBias = 0.8f;
 
     UAssetManager& ResourceManager = UAssetManager::GetInstance();
 
