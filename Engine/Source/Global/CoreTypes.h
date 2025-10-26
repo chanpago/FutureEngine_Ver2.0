@@ -198,5 +198,9 @@ struct FShadowMapConstants
 	FVector4 LightOrthoParams;             // (l, r, b, t)
 	FVector2 ShadowMapSize;                // (Sx, Sy)
 	uint32	bUsePSM;
-	uint32  pad;                      // 8 bytes padding (uint2 in HLSL)
+	uint32  ShadowCasterType;        // 0: Directional, 1: Spot
+	uint32  SpotShadowCasterIndex;   // index into SpotLightInfos
+	uint32  padA;                    // padding for 16-byte alignment
+	uint32  padB0;                   // extra padding to keep CBuffer size aligned
+	uint32  padB1;
 };

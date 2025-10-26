@@ -27,7 +27,11 @@ cbuffer PSMConstants  : register(b6)
     float2 ShadowMapSize;                // (Sx, Sy)
     
     uint   bUsePSM;                    // 0: Simple Ortho, 1: PSM
-    uint  pad;
+    uint   ShadowCasterType;           // 0: Directional, 1: Spot
+    uint   SpotShadowCasterIndex;      // index into SpotLightInfos (unused here)
+    uint   padA;
+    uint   padB0;
+    uint   padB1;
 }
 
 // Input/Output Structures

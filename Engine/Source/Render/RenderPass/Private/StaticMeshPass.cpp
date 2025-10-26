@@ -64,39 +64,62 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
 	// Shadow Map 상수 버퍼 및 SRV 바인딩 (b6, t10 슬롯)
 	FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-	if (UpdateLightBufferPass)
-	{
-		ID3D11ShaderResourceView* ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
-		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
-		{
-			FShadowMapConstants ShadowMapConsts;
-			// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
-			ShadowMapConsts.EyeView = UpdateLightBufferPass->GetCachedEyeView();
-			ShadowMapConsts.EyeProj = UpdateLightBufferPass->GetCachedEyeProj();
-			ShadowMapConsts.EyeViewProjInv = (ShadowMapConsts.EyeView * ShadowMapConsts.EyeProj).Inverse();
+    if (UpdateLightBufferPass)
+    {
+        // Choose which shadow map to bind: directional or spot
+        ID3D11ShaderResourceView* ShadowMapSRV = nullptr;
+        const uint32 casterType = UpdateLightBufferPass->GetShadowCasterType(); // 0: Dir, 1: Spot
+        if (casterType == 1)
+        {
+            ShadowMapSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
+        }
+        else
+        {
+            ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+        }
 
-			ShadowMapConsts.LightViewP = UpdateLightBufferPass->GetLightViewMatrix();
-			ShadowMapConsts.LightProjP = UpdateLightBufferPass->GetLightProjectionMatrix();
-			ShadowMapConsts.LightViewPInv = ShadowMapConsts.LightViewP.Inverse();
+        if (ShadowMapSRV)
+        {
+            FShadowMapConstants ShadowMapConsts;
+            ShadowMapConsts.EyeView = UpdateLightBufferPass->GetCachedEyeView();
+            ShadowMapConsts.EyeProj = UpdateLightBufferPass->GetCachedEyeProj();
+            ShadowMapConsts.EyeViewProjInv = (ShadowMapConsts.EyeView * ShadowMapConsts.EyeProj).Inverse();
 
-			ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);
-			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
-			ShadowMapConsts.LightDirWS = LdirWS;
-			ShadowMapConsts.bInvertedLight = 0;
+            ShadowMapConsts.LightViewP = UpdateLightBufferPass->GetLightViewMatrix();
+            ShadowMapConsts.LightProjP = UpdateLightBufferPass->GetLightProjectionMatrix();
+            ShadowMapConsts.LightViewPInv = ShadowMapConsts.LightViewP.Inverse();
 
-			ShadowMapConsts.LightOrthoParams = UpdateLightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
+            // Params and selection flags
+            if (casterType == 1)
+            {
+                // Spotlight: simple perspective, bias from light component
+                ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);
+                ShadowMapConsts.LightDirWS = FVector(0,0,0);
+                ShadowMapConsts.bInvertedLight = 0;
+                ShadowMapConsts.ShadowMapSize = FVector2(1024.0f, 1024.0f);
+                ShadowMapConsts.bUsePSM = 0;
+            }
+            else
+            {
+                // Directional: preserve previous behavior
+                ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);
+                FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
+                ShadowMapConsts.LightDirWS = LdirWS;
+                ShadowMapConsts.bInvertedLight = 0;
+                ShadowMapConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
+                ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+            }
+            ShadowMapConsts.LightOrthoParams = UpdateLightBufferPass->GetLightOrthoLTRB();
+            ShadowMapConsts.ShadowCasterType = casterType;
+            ShadowMapConsts.SpotShadowCasterIndex = UpdateLightBufferPass->GetSpotShadowCasterIndex();
 
-			ShadowMapConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
-			ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+            FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 
-			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
-
-			// 바인딩 (PS b6 / t10)
-			Pipeline->SetConstantBuffer(6, EShaderType::VS, ConstantBufferShadowMap); // ← 추가(필요시)
-			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
-			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
-		}
-	}
+            Pipeline->SetConstantBuffer(6, EShaderType::VS, ConstantBufferShadowMap);
+            Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
+            Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+        }
+    }
 	
 	if (!(Context.ShowFlags & EEngineShowFlags::SF_StaticMesh)) { return; }
 	TArray<UStaticMeshComponent*>& MeshComponents = Context.StaticMeshes;

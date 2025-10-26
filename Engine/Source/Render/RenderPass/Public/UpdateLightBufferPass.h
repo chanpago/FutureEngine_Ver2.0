@@ -21,11 +21,15 @@ public:
 	virtual void Release() override;
 
 	FMatrix GetLightViewMatrix() const { return LightViewP; }
-	FMatrix GetLightProjectionMatrix() const { return LightProjP; }
-	FMatrix GetCachedEyeView() const { return CachedEyeView; }
-	FMatrix GetCachedEyeProj() const { return CachedEyeProj; }
+    FMatrix GetLightProjectionMatrix() const { return LightProjP; }
+    FMatrix GetCachedEyeView() const { return CachedEyeView; }
+    FMatrix GetCachedEyeProj() const { return CachedEyeProj; }
 
-	FVector4 GetLightOrthoLTRB() const {return LightOrthoLTRB;}
+    FVector4 GetLightOrthoLTRB() const {return LightOrthoLTRB;}
+
+    // Shadow caster selection helpers
+    uint32 GetShadowCasterType() const { return ShadowCasterType; } // 0: Directional, 1: Spot
+    int32  GetSpotShadowCasterIndex() const { return SpotShadowCasterIndex; }
 
 private:
 	void BakeShadowMap(FRenderingContext& Context);
@@ -37,15 +41,19 @@ private:
 	ID3D11Buffer* LightCameraConstantBuffer = nullptr;
 	ID3D11Buffer* PSMConstantBuffer = nullptr;
 
-	D3D11_VIEWPORT DirectionalShadowViewport;
-	D3D11_VIEWPORT SpotShadowViewport;
-	D3D11_VIEWPORT PointShadowViewport;
+    D3D11_VIEWPORT DirectionalShadowViewport;
+    D3D11_VIEWPORT SpotShadowViewport;
+    D3D11_VIEWPORT PointShadowViewport;
 
-	FMatrix LightViewP;
-	FMatrix LightProjP;
-	FMatrix CachedEyeView;  // PSM 베이킹 시 사용한 카메라 V_e
-	FMatrix CachedEyeProj;  // PSM 베이킹 시 사용한 카메라 P_e
-	
-	FVector4 LightOrthoLTRB = FVector4(-1, 1, -1, 1);
+    FMatrix LightViewP;
+    FMatrix LightProjP;
+    FMatrix CachedEyeView;  // PSM 베이킹 시 사용한 카메라 V_e
+    FMatrix CachedEyeProj;  // PSM 베이킹 시 사용한 카메라 P_e
+    
+    FVector4 LightOrthoLTRB = FVector4(-1, 1, -1, 1);
+
+    // Selected shadow caster info (for shading pass binding)
+    uint32 ShadowCasterType = 0;        // 0: Directional, 1: Spot
+    int32  SpotShadowCasterIndex = -1;  // index in SpotLightInfos
 	
 };

@@ -87,6 +87,10 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     ID3D11DepthStencilView* OriginalDSV = nullptr;
     DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
 
+    // Reset selected shadow caster to directional by default
+    ShadowCasterType = 0;
+    SpotShadowCasterIndex = -1;
+
     // Directional Light Shadow Map 렌더링
     for (auto Light : Context.DirectionalLights)
     {
@@ -436,6 +440,130 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         }
         
         // 현재는 하나의 Directional Light만 처리 (나중에 여러 개 지원 가능)
+        break;
+    }
+
+    // Spot Light Shadow Map 렌더링 (단일 스포트라이트 우선 적용)
+    for (size_t si = 0; si < Context.SpotLights.size(); ++si)
+    {
+        USpotLightComponent* Spot = Context.SpotLights[si];
+        if (!Spot || !Spot->GetVisible() || !Spot->GetLightEnabled())
+            continue;
+
+        // Bind Spot DSV and clear
+        ID3D11DepthStencilView* SpotDSV = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
+        if (!SpotDSV)
+            break;
+        DeviceContext->OMSetRenderTargets(0, nullptr, SpotDSV);
+        DeviceContext->ClearDepthStencilView(SpotDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+        // Spot viewport
+        DeviceContext->RSSetViewports(1, &SpotShadowViewport);
+
+        // Build light view (row-vector LookAt)
+        auto NormalizeSafe = [](const FVector& v, float eps = 1e-6f){
+            float len = v.Length();
+            return (len > eps) ? (v / len) : FVector(0,0,0);
+        };
+        auto BuildLookAtRowLH = [](const FVector& Eye, const FVector& At, const FVector& UpHint)
+        {
+            auto NormalizeSafeL = [](const FVector& v, float eps = 1e-6f){
+                float len = v.Length();
+                return (len > eps) ? (v / len) : FVector(0,0,0);
+            };
+            FVector Fwd = NormalizeSafeL(At - Eye);
+            FVector Up  = UpHint;
+            if (fabsf(Fwd.Dot(Up)) > 0.99f) Up = (fabsf(Fwd.Z) > 0.9f) ? FVector(1,0,0) : FVector(0,0,1);
+            FVector Right = NormalizeSafeL(Up.Cross(Fwd));
+            Up = Fwd.Cross(Right);
+            FMatrix M = FMatrix::Identity();
+            M.Data[0][0]=Right.X; M.Data[0][1]=Up.X; M.Data[0][2]=Fwd.X;
+            M.Data[1][0]=Right.Y; M.Data[1][1]=Up.Y; M.Data[1][2]=Fwd.Y;
+            M.Data[2][0]=Right.Z; M.Data[2][1]=Up.Z; M.Data[2][2]=Fwd.Z;
+            M.Data[3][0]= -Eye.Dot(Right);
+            M.Data[3][1]= -Eye.Dot(Up);
+            M.Data[3][2]= -Eye.Dot(Fwd);
+            M.Data[3][3]=  1.0f;
+            return M;
+        };
+        auto PerspectiveRowLH = [](float fovyRad, float aspect, float zn, float zf)
+        {
+            float f = 1.0f / std::tanf(fovyRad * 0.5f);
+            FMatrix P = FMatrix::Identity();
+            P.Data[0][0] = f / aspect;
+            P.Data[1][1] = f;
+            P.Data[2][2] = zf / (zf - zn);
+            P.Data[2][3] = 1.0f;
+            P.Data[3][2] = (-zn * zf) / (zf - zn);
+            P.Data[3][3] = 0.0f;
+            return P;
+        };
+
+        FVector LightPos = Spot->GetWorldLocation();
+        FVector LightDir = Spot->GetForwardVector().GetNormalized();
+        FVector UpHint   = (fabsf(LightDir.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+        FMatrix LightView = BuildLookAtRowLH(LightPos, LightPos + LightDir, UpHint);
+
+        float fovY = Spot->GetOuterConeAngle() * 2.0f; // use outer cone as FOV
+        float aspect = 1.0f;
+        float zn = 0.5f; // slightly away from zero to reduce acne
+        float zf = std::max(Spot->GetAttenuationRadius(), 1.0f);
+        FMatrix LightProj = PerspectiveRowLH(fovY, aspect, zn, zf);
+
+        // Fill constants (non-PSM path)
+        FShadowMapConstants S;
+        S.EyeView = FMatrix::Identity();
+        S.EyeProj = FMatrix::Identity();
+        S.EyeViewProjInv = FMatrix::Identity();
+        S.LightViewP = LightView;
+        S.LightProjP = LightProj;
+        S.LightViewPInv = LightView.Inverse();
+        S.ShadowParams = FVector4(Spot->GetShadowBias(), 0, 0, 0);
+        S.LightDirWS = (-LightDir).GetNormalized();
+        S.bInvertedLight = 0;
+        S.LightOrthoParams = FVector4(0,0,0,0);
+        S.ShadowMapSize = FVector2(SpotShadowViewport.Width, SpotShadowViewport.Height);
+        S.bUsePSM = 0;
+        // Caster selection: mark spotlight
+        ShadowCasterType = 1;
+
+        // Compute SpotShadowCasterIndex by matching visible/enabled spots order
+        int idx = -1; int visibleIdx = -1;
+        for (size_t k=0; k<Context.SpotLights.size(); ++k)
+        {
+            USpotLightComponent* L = Context.SpotLights[k];
+            if (!L || !L->GetVisible() || !L->GetLightEnabled()) continue;
+            ++visibleIdx;
+            if (L == Spot) { idx = visibleIdx; break; }
+        }
+        SpotShadowCasterIndex = idx;
+
+        FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, S);
+
+        // Cache for shading pass
+        LightViewP = LightView;
+        LightProjP = LightProj;
+        CachedEyeView = FMatrix::Identity();
+        CachedEyeProj = FMatrix::Identity();
+
+        // Pipeline state
+        FPipelineInfo PipeS = {
+            ShadowMapInputLayout,
+            ShadowMapVS,
+            FRenderResourceFactory::GetRasterizerState({ECullMode::None, EFillMode::Solid}),
+            URenderer::GetInstance().GetDefaultDepthStencilState(),
+            ShadowMapPS,
+            nullptr,
+            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+        };
+        Pipeline->UpdatePipeline(PipeS);
+        Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
+        Pipeline->SetConstantBuffer(6, EShaderType::VS, PSMConstantBuffer);
+        for (auto MeshComp : Context.StaticMeshes)
+        {
+            if (!MeshComp || !MeshComp->IsVisible()) continue;
+            RenderPrimitive(MeshComp);
+        }
         break;
     }
     // Shadow Map DSV를 unbind (다음 pass에서 SRV로 사용하기 위해)

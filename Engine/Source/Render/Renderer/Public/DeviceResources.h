@@ -45,6 +45,8 @@ public:
 	// Shadow Map Getters
 	ID3D11DepthStencilView* GetDirectionalShadowMapDSV() const { return DirectionalShadowMapDSV; }
 	ID3D11ShaderResourceView* GetDirectionalShadowMapSRV() const { return DirectionalShadowMapSRV; }
+	ID3D11DepthStencilView* GetSpotShadowMapDSV() const { return SpotShadowMapDSV; }
+	ID3D11ShaderResourceView* GetSpotShadowMapSRV() const { return SpotShadowMapSRV; }
 
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
@@ -91,6 +93,11 @@ private:
 	ID3D11Texture2D* DirectionalShadowMapTexture = nullptr;
 	ID3D11DepthStencilView* DirectionalShadowMapDSV = nullptr;
 	ID3D11ShaderResourceView* DirectionalShadowMapSRV = nullptr;
+
+	// Spot Light Shadow Map
+	ID3D11Texture2D* SpotShadowMapTexture = nullptr;
+	ID3D11DepthStencilView* SpotShadowMapDSV = nullptr;
+	ID3D11ShaderResourceView* SpotShadowMapSRV = nullptr;
 	
 	D3D11_VIEWPORT ViewportInfo = {};
 

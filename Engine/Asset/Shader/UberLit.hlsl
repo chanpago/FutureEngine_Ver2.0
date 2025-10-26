@@ -116,8 +116,12 @@ cbuffer ShadowMapConstants : register(b6)
     float4 LightOrthoParams;           // (l, r, b, t)
     float2 ShadowMapSize;              // (Sx, Sy)
 
-    uint   bUsePSM;                    // 0: Simple Ortho, 1: PSM
-    uint  pad;
+    uint   bUsePSM;                    // 0: Simple, 1: PSM path
+    uint   ShadowCasterType;           // 0: Directional, 1: Spot
+    uint   SpotShadowCasterIndex;      // index into SpotLightInfos
+    uint   padA;                       // padding for alignment
+    uint   padB0;
+    uint   padB1;
 };
 
 
@@ -213,8 +217,7 @@ Texture2D NormalTexture : register(t3);
 Texture2D AlphaTexture : register(t4);
 Texture2D BumpTexture : register(t5);
 
-// 섬도우맵 텍셀 크기(PCF 오프셋용).
-static const float2 gShadowTexel = float2(1.0/2048.0, 1.0/2048.0);
+// Shadow map texel size is derived from ShadowMapSize in cbuffer
 SamplerState SamplerWrap : register(s0);
 SamplerState SamplerShadow : register(s1);  // Point+Clamp for shadow map
 
@@ -284,11 +287,12 @@ float PSM_Visibility(float3 worldPos)
 
     // 2) 수동 PCF (3x3). 필요시 5x5로 확장 가능.
     const int R = 1;
+    float2 shadowTexel = 1.0 / ShadowMapSize;
     float sum = 0.0;
     [unroll] for (int dy=-R; dy<=R; ++dy)
         [unroll] for (int dx=-R; dx<=R; ++dx)
         {
-            float2 o  = float2(dx, dy) * gShadowTexel;
+            float2 o  = float2(dx, dy) * shadowTexel;
             float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
 
             // 비교방향: normal (<) vs inverted (>)
@@ -619,7 +623,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     //finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + Input.DiffuseLight.rgb * diffuseColor.rgb + Input.SpecularLight.rgb * specularColor.rgb;
 
     // Shadow Map 적용 (Pixel Shader에서 그림자 계산)
-    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    float ShadowFactor = (ShadowCasterType == 0) ? CalculateShadowFactor(Input.WorldPosition) : 1.0;
     float3 shadedDiffuse = Input.DiffuseLight.rgb * ShadowFactor;
     float3 shadedSpecular = Input.SpecularLight.rgb * ShadowFactor;
     finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + shadedDiffuse * diffuseColor.rgb + shadedSpecular * specularColor.rgb;
@@ -635,7 +639,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
 
     //ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
     // 2. Directional Light (Shadow Map 적용)
-    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    float ShadowFactor = (ShadowCasterType == 0) ? CalculateShadowFactor(Input.WorldPosition) : 1.0;
     //float ShadowFactor = 1.0;  // 강제 밝게
     FIllumination DirectionalIllum = CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation);
     DirectionalIllum.Diffuse *= ShadowFactor;
@@ -655,10 +659,22 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
     // 4. Spot Lights
     uint SpotLightCount = GetSpotLightCount(LightIndicesOffset);
-     for (uint j = 0; j < SpotLightCount ; j++)
+    for (uint j = 0; j < SpotLightCount ; j++)
     {
-        FSpotLightInfo SpotLight = GetSpotLight(LightIndicesOffset + j);
-        ADD_ILLUM(Illumination, CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation));
+        uint spotInfoIndex = SpotLightIndices[LightIndicesOffset + j];
+        FSpotLightInfo SpotLight = SpotLightInfos[spotInfoIndex];
+
+        FIllumination spotIllum = CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation);
+
+        // Apply shadow only for the selected spot shadow caster
+        if (ShadowCasterType == 1 && spotInfoIndex == SpotShadowCasterIndex)
+        {
+            float SpotShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+            spotIllum.Diffuse *= SpotShadowFactor;
+            spotIllum.Specular *= SpotShadowFactor;
+        }
+
+        ADD_ILLUM(Illumination, spotIllum);
     }
     
     finalPixel.rgb = Illumination.Ambient.rgb * ambientColor.rgb + Illumination.Diffuse.rgb * diffuseColor.rgb + Illumination.Specular.rgb * specularColor.rgb;

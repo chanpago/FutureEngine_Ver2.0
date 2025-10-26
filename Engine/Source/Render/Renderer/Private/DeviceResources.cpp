@@ -400,7 +400,7 @@ void UDeviceResources::ReleaseFactories()
 void UDeviceResources::CreateShadowMapResources()
 {
 	// TODO: 임시 비활성화 - 문제 분리용
-	
+	 
 	if (!Device)
 	{
 		UE_LOG_ERROR("CreateShadowMapResources: Device is null!");
@@ -461,7 +461,55 @@ void UDeviceResources::CreateShadowMapResources()
 	}
 
 	UE_LOG("Directional Shadow Map Resources Created Successfully (Size: %dx%d)", ShadowMapSize, ShadowMapSize);
-	
+
+	// Spot Light Shadow Map Resources (single 1024x1024 texture)
+	const UINT SpotShadowSize = 1024;
+
+	D3D11_TEXTURE2D_DESC SpotTexDesc = {};
+	SpotTexDesc.Width = SpotShadowSize;
+	SpotTexDesc.Height = SpotShadowSize;
+	SpotTexDesc.MipLevels = 1;
+	SpotTexDesc.ArraySize = 1;
+	SpotTexDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	SpotTexDesc.SampleDesc.Count = 1;
+	SpotTexDesc.SampleDesc.Quality = 0;
+	SpotTexDesc.Usage = D3D11_USAGE_DEFAULT;
+	SpotTexDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+	SpotTexDesc.CPUAccessFlags = 0;
+	SpotTexDesc.MiscFlags = 0;
+
+	HRESULT hr2 = Device->CreateTexture2D(&SpotTexDesc, nullptr, &SpotShadowMapTexture);
+	if (FAILED(hr2))
+	{
+		UE_LOG_ERROR("Failed to create Spot Shadow Map Texture");
+		return;
+	}
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC SpotDSVDesc = {};
+	SpotDSVDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	SpotDSVDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	SpotDSVDesc.Texture2D.MipSlice = 0;
+	hr2 = Device->CreateDepthStencilView(SpotShadowMapTexture, &SpotDSVDesc, &SpotShadowMapDSV);
+	if (FAILED(hr2))
+	{
+		UE_LOG_ERROR("Failed to create Spot Shadow Map DSV");
+		return;
+	}
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC SpotSRVDesc = {};
+	SpotSRVDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+	SpotSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	SpotSRVDesc.Texture2D.MostDetailedMip = 0;
+	SpotSRVDesc.Texture2D.MipLevels = 1;
+	hr2 = Device->CreateShaderResourceView(SpotShadowMapTexture, &SpotSRVDesc, &SpotShadowMapSRV);
+	if (FAILED(hr2))
+	{
+		UE_LOG_ERROR("Failed to create Spot Shadow Map SRV");
+		return;
+	}
+
+	UE_LOG("Spot Shadow Map Resources Created Successfully (Size: %dx%d)", SpotShadowSize, SpotShadowSize);
+	 
 }
 
 /**
@@ -472,4 +520,8 @@ void UDeviceResources::ReleaseShadowMapResources()
 	SafeRelease(DirectionalShadowMapSRV);
 	SafeRelease(DirectionalShadowMapDSV);
 	SafeRelease(DirectionalShadowMapTexture);
+
+	SafeRelease(SpotShadowMapSRV);
+	SafeRelease(SpotShadowMapDSV);
+	SafeRelease(SpotShadowMapTexture);
 }
