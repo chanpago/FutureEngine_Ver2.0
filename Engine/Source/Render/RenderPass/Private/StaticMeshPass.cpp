@@ -103,6 +103,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetSamplerState(0, EShaderType::PS, Renderer.GetDefaultSampler());
 			Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
 			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+			Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
 		}
 	}
 	

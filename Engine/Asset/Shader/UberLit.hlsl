@@ -219,6 +219,7 @@ Texture2D BumpTexture : register(t5);
 static const float2 gShadowTexel = float2(1.0/2048.0, 1.0/2048.0);
 SamplerState SamplerWrap : register(s0);
 SamplerState SamplerLinearClamp : register(s1);
+SamplerState SamplerShadow : register(s2);
 SamplerComparisonState SamplerPCF : register(s10);
 
 // Material flags
@@ -291,7 +292,7 @@ float PSM_Visibility(float3 worldPos)
         [unroll] for (int dx=-R; dx<=R; ++dx)
         {
             float2 o  = float2(dx, dy) * gShadowTexel;
-            float  dz = ShadowMapTexture.SampleLevel(SamplerPCF, uv + o, 0).r;
+            float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
 
             // 비교방향: normal (<) vs inverted (>)
             // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
@@ -319,8 +320,8 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
 
     
     // World Position을 Light 공간으로 변환
-    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView);
-    LightSpacePos = mul(LightSpacePos, LightProjection);
+    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP);
+    LightSpacePos = mul(LightSpacePos, LightProjP);
     
     // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
     LightSpacePos.xyz /= LightSpacePos.w;
@@ -336,14 +337,14 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
     
-    if ((UseVSM < 0.5f && UsePCF < 0.5f) || (UseVSM > 0.5f && UsePCF > 0.5f))
+    if ((bUseVSM < 0.5f && bUsePCF < 0.5f) || (bUseVSM > 0.5f && bUsePCF > 0.5f))
     {
         // Classic depth compare
         float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-        float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        float Shadow = (CurrentDepth - ShadowParams[0]) > ShadowMapDepth ? 0.0f : 1.0f;
         return Shadow;
     }
-    else if (UsePCF > 0.5f)
+    else if (bUsePCF > 0.5f)
     {
         // 3x3 PCF (Percentage-Closer Filtering)
         float Shadow = 0.0f;
@@ -363,14 +364,14 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
                 // 세번째 인자가 더 작으면 true -> 1.0 반환 (빛 받음)
                 // 아니라면 false -> 0.0 반환 (그림자)
      
-                Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowBias);
+                Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowParams[0]);
             }
         }
         // 9개 평균 계산하여 부드러운 그림자 값
         Shadow /= 9.0f;
         return Shadow;
     }
-    else if(UseVSM > 0.5f)
+    else if(bUseVSM > 0.5f)
     {
         // VSM: configurable smoothing via mip bias
         static const float VSM_MipBias = 1.25f; // Increase for softer shadows
@@ -381,7 +382,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
 
         // Clamp depth into [0,1] and apply small bias
-        float z = saturate(CurrentDepth - ShadowBias);
+        float z = saturate(CurrentDepth - ShadowParams[0]);
         float m1 = Moments.x;
         float m2 = Moments.y;
 
