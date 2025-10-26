@@ -106,21 +106,23 @@ cbuffer ShadowMapConstants : register(b6)
     row_major float4x4 EyeProj;        // P_e
     row_major float4x4 EyeViewProjInv; // (P_e * V_e)^(-1)
 
-    row_major float4x4 LightViewP;     // V_L'
-    row_major float4x4 LightProjP;     // P_L'
-    row_major float4x4 LightViewPInv;  // (V'_L)^(-1)
+    row_major float4x4 LightViewP[MAX_CASCADES]; // V_L'
+    row_major float4x4 LightProjP[MAX_CASCADES]; // P_L'
+    row_major float4x4 LightViewPInv[MAX_CASCADES]; // (V'_L)^(-1)
 
     float4 ShadowParams;               // x=bias, y=slopeBias, z=sharpen, w=reserved
+    float4 CascadeSplits;
     float3 LightDirWS;                 // 월드공간 광원 방향
     uint   bInvertedLight;             // 0: normal, 1: inverted
 
     float4 LightOrthoParams;           // (l, r, b, t)
     float2 ShadowMapSize;              // (Sx, Sy)
 
-    uint   bUsePSM;                    // 0: Simple Ortho, 1: PSM
-    uint  bUseVSM;
-    uint  bUsePCF;
-    float3 pad;
+    uint bUsePSM; // 0: Simple Ortho, 1: PSM
+    uint bUseVSM;
+    uint bUsePCF;
+    uint bUseCSM;
+    float2 pad;
 };
 
 
@@ -262,20 +264,44 @@ struct PS_OUTPUT
     float4 NormalData : SV_Target1;
 };
 
+float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
+{
+    // VSM: configurable smoothing via mip bias
+    static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
+    static const float VSM_BleedReduction = 0.2f; // 0..1, higher reduces light bleeding
+
+    // Clamp depth into [0,1] and apply small bias
+    float z = saturate(CurrentDepth - ShadowParams.x);
+    float m1 = Moments.x;
+    float m2 = Moments.y;
+
+    // Variance and Chebyshev upper bound
+    float variance = max(m2 - m1 * m1, VSM_MinVariance);
+    float d = z - m1;
+    float pMax = saturate(variance / (variance + d * d));
+
+    // Light bleeding reduction
+    float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+    return visibility;
+}
+
 // 반환: 가시도(1=조명 통과, 0=완전 그림자)
 float PSM_Visibility(float3 worldPos)
 {
+    // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
+    float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
+    
     float4 sh;
 
     if (bUsePSM == 1) {
         // PSM: World→Eye NDC→Light
         float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
         float3 ndc = eyeClip.xyz / max(eyeClip.w, 1e-8f);
-        sh = mul(mul(float4(ndc, 1.0), LightViewP), LightProjP);
+        sh = mul(mul(float4(ndc, 1.0), LightViewP[0]), LightProjP[0]);
     }
     else {
         // Simple Ortho: World→Light 직접 변환
-        sh = mul(mul(float4(worldPos, 1.0), LightViewP), LightProjP);
+        sh = mul(mul(float4(worldPos, 1.0), LightViewP[0]), LightProjP[0]);
     }
 
     // Clip→NDC→UV, 깊이 (DirectX UV: Y축 반전 필요)
@@ -322,15 +348,15 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
 
     
     // World Position을 Light 공간으로 변환
-    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP);
-    LightSpacePos = mul(LightSpacePos, LightProjP);
+    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[0]);
+    LightSpacePos = mul(LightSpacePos, LightProjP[0]);
     
-        // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
-        LightSpacePos.xyz /= LightSpacePos.w;
+    // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
+    LightSpacePos.xyz /= LightSpacePos.w;
     
-        // NDC [-1,1] -> Texture UV [0,1] 변환
-        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-        ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
+    // NDC [-1,1] -> Texture UV [0,1] 변환
+    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+    ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
     
     // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
     if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
@@ -396,6 +422,34 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         // Light bleeding reduction
         float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
         return visibility;
+    }
+    else if (bUseCSM > 0.5f)
+    {
+        int CascadeIndex = 0;
+        if (ViewDepth > CascadeSplits.x)
+            CascadeIndex = 1;
+        if (ViewDepth > CascadeSplits.y)
+            CascadeIndex = 2;
+        if (ViewDepth > CascadeSplits.z)
+            CascadeIndex = 3;
+        
+        float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[CascadeIndex]);
+        LightSpacePos = mul(LightSpacePos, LightProjP[CascadeIndex]);
+        LightSpacePos.xyz /= LightSpacePos.w;
+        
+        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+        ShadowUV.y = 1.0f - ShadowUV.y;
+        
+        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+            return 1.0f;
+        
+        float CurrentDepth = LightSpacePos.z;
+        // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
+        // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        
+        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
+        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
+        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
     }
     return 1.0f;
 }

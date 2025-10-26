@@ -59,24 +59,49 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	{
 		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
 		const bool bUsePCF = (Context.ShowFlags & EEngineShowFlags::SF_PCF) != 0;
-		
+		const bool bUseCSM = (Context.ShowFlags & EEngineShowFlags::SF_CSM) != 0;
 
-		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM && !(bUsePCF) ?
-			Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
-			: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
-		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
+		bool bShouldBindShadows = bUseCSM || bUseVSM || bUseCSM;
+		ID3D11ShaderResourceView* ShadowMapSRV = nullptr;
+		FShadowMapConstants ShadowMapConsts = {};
+
+		if (bUseCSM)
 		{
-			FShadowMapConstants ShadowMapConsts;
+			// Get pre-computed CSM constants from LightBufferPass
+			ShadowMapConsts = UpdateLightBufferPass->GetCascadedShadowMapConstants();
+			// Specify the use of CSM
+			ShadowMapConsts.bUseCSM = 1.0f;
+
+			if (bUseVSM)
+			{
+				// CSM + VSM
+				ShadowMapConsts.bUseVSM = 1.0f;
+				ShadowMapConsts.ShadowParams.X = 0.0015f;  // VSM needs less bias
+				// TODO: needs Texture2DArray resource of VSM format (color)
+				// bShouldBindShadows = false;        // Temporarily disabled
+			}
+			else
+			{
+				// Only CSM
+				ShadowMapConsts.bUseVSM = 0.0f;
+				ShadowMapConsts.ShadowParams.X = 0.005f;  // VSM needs less bias
+				ShadowMapSRV = Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
+			}
+		}
+		else
+		{
+			// No CSM
+
 			// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
 			ShadowMapConsts.EyeView = UpdateLightBufferPass->GetCachedEyeView();
 			ShadowMapConsts.EyeProj = UpdateLightBufferPass->GetCachedEyeProj();
 			ShadowMapConsts.EyeViewProjInv = (ShadowMapConsts.EyeView * ShadowMapConsts.EyeProj).Inverse();
 
-			ShadowMapConsts.LightViewP = UpdateLightBufferPass->GetLightViewMatrix();
-			ShadowMapConsts.LightProjP = UpdateLightBufferPass->GetLightProjectionMatrix();
-			ShadowMapConsts.LightViewPInv = ShadowMapConsts.LightViewP.Inverse();
+			ShadowMapConsts.LightViewP[0] = UpdateLightBufferPass->GetLightViewMatrix();
+			ShadowMapConsts.LightProjP[0] = UpdateLightBufferPass->GetLightProjectionMatrix();
+			ShadowMapConsts.LightViewPInv[0] = ShadowMapConsts.LightViewP[0].Inverse();
 
-			ShadowMapConsts.ShadowParams = FVector4(0.0008f,0.0f,0.0f,0.0f);
+			ShadowMapConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
 			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
 			ShadowMapConsts.LightDirWS = LdirWS;
 			ShadowMapConsts.bInvertedLight = 0;
@@ -87,13 +112,27 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
 			ShadowMapConsts.bUseVSM = bUseVSM ? 1.0f : 0.0f;
 			ShadowMapConsts.bUsePCF = bUsePCF ? 1.0f : 0.0f;
-			
+
+			ShadowMapSRV = bUseVSM && !(bUsePCF) 
+				? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
+				: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+		}
+
+		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
+		{
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 
 			// 바인딩 (PS b6 / t10)
 			Pipeline->SetConstantBuffer(6, EShaderType::VS, ConstantBufferShadowMap); // ← 추가(필요시)
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
-			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+			if (bUseCSM)
+			{
+				Pipeline->SetShaderResourceView(11, EShaderType::PS, ShadowMapSRV);
+			}
+			else
+			{
+				Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+			}
 
 			// hard shadow 방식 -> sampler를 default
 			// vsm 방식 -> sampler를 clamp 
@@ -103,6 +142,11 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
 			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
 			Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+		}
+		else
+		{
+			Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
+			Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
 		}
 	}
 	
