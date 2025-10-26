@@ -198,5 +198,7 @@ struct FShadowMapConstants
 	FVector4 LightOrthoParams;             // (l, r, b, t)
 	FVector2 ShadowMapSize;                // (Sx, Sy)
 	uint32	bUsePSM;
-	uint32  pad;                      // 8 bytes padding (uint2 in HLSL)
+	uint32  bUseVSM;                      
+	uint32  bUsePCF;
+	float   Padding[3];
 };

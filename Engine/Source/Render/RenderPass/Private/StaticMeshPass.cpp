@@ -46,17 +46,9 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	FPipelineInfo PipelineInfo = { InputLayout, VS, RS, DS, PS, nullptr, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST };
 	Pipeline->UpdatePipeline(PipelineInfo);
 
-	// ✅ 정말로 바인드됐는지 최종 확인(디버그용)
-	{
-		ID3D11VertexShader* curVS=nullptr; UINT cnt=0;
-		Renderer.GetDeviceContext()->VSGetShader(&curVS, nullptr, &cnt);
-		if (!curVS) { UE_LOG_ERROR("StaticMeshPass: VS not bound after UpdatePipeline"); return; }
-		curVS->Release();
-	}
-	
-	// Set default samplers: s0=wrap, s1=shadow(point+clamp)
-	Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
-	Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetShadowSampler());
+    // Set default samplers: s0 and s1 (linear clamp)
+    Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
+    Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetShadowMapClampSampler());
 
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
@@ -66,7 +58,13 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
 	if (UpdateLightBufferPass)
 	{
-		ID3D11ShaderResourceView* ShadowMapSRV = Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
+		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
+		const bool bUsePCF = (Context.ShowFlags & EEngineShowFlags::SF_PCF) != 0;
+		
+
+		ID3D11ShaderResourceView* ShadowMapSRV = bUseVSM && !(bUsePCF) ?
+			Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
+			: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{
 			FShadowMapConstants ShadowMapConsts;
@@ -88,13 +86,23 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
 			ShadowMapConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
 			ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
-
+			ShadowMapConsts.bUseVSM = bUseVSM ? 1.0f : 0.0f;
+			ShadowMapConsts.bUsePCF = bUsePCF ? 1.0f : 0.0f;
+			
 			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
 
 			// 바인딩 (PS b6 / t10)
 			Pipeline->SetConstantBuffer(6, EShaderType::VS, ConstantBufferShadowMap); // ← 추가(필요시)
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+
+			// hard shadow 방식 -> sampler를 default
+			// vsm 방식 -> sampler를 clamp 
+			// pcf 방식 -> sampler를 pcf
+
+			Pipeline->SetSamplerState(0, EShaderType::PS, Renderer.GetDefaultSampler());
+			Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
 		}
 	}
 	

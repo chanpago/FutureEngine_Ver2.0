@@ -117,7 +117,9 @@ cbuffer ShadowMapConstants : register(b6)
     float2 ShadowMapSize;              // (Sx, Sy)
 
     uint   bUsePSM;                    // 0: Simple Ortho, 1: PSM
-    uint  pad;
+    uint  bUseVSM;
+    uint  bUsePCF;
+    float3 pad;
 };
 
 
@@ -216,8 +218,8 @@ Texture2D BumpTexture : register(t5);
 // 섬도우맵 텍셀 크기(PCF 오프셋용).
 static const float2 gShadowTexel = float2(1.0/2048.0, 1.0/2048.0);
 SamplerState SamplerWrap : register(s0);
-SamplerState SamplerShadow : register(s1);  // Point+Clamp for shadow map
-
+SamplerState SamplerLinearClamp : register(s1);
+SamplerComparisonState SamplerPCF : register(s10);
 
 // Material flags
 #define HAS_DIFFUSE_MAP  (1 << 0) // map_Kd
@@ -316,8 +318,83 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
  */
 
     
-    float taps = (2*R+1)*(2*R+1);
-    return sum / taps;  // 1=통과(밝음), 0=모두 가려짐
+    // World Position을 Light 공간으로 변환
+    float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightView);
+    LightSpacePos = mul(LightSpacePos, LightProjection);
+    
+    // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
+    LightSpacePos.xyz /= LightSpacePos.w;
+    
+    // NDC [-1,1] -> Texture UV [0,1] 변환
+    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+    ShadowUV.y = 1.0f - ShadowUV.y;  // Y축 반전 (DirectX UV 좌표계)
+    
+    // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
+    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+        return 1.0f;
+    
+    // 현재 픽셀의 Light 공간 Depth
+    float CurrentDepth = LightSpacePos.z;
+    
+    if ((UseVSM < 0.5f && UsePCF < 0.5f) || (UseVSM > 0.5f && UsePCF > 0.5f))
+    {
+        // Classic depth compare
+        float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
+        float Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        return Shadow;
+    }
+    else if (UsePCF > 0.5f)
+    {
+        // 3x3 PCF (Percentage-Closer Filtering)
+        float Shadow = 0.0f;
+        float2 TexelSize;
+        uint Width, Height;
+        ShadowMapTexture.GetDimensions(Width, Height); // 텍스처의 가로, 세로 가져오기
+        TexelSize = 1.0f / float2(Width, Height); // 한 텍셀의 사이즈
+    
+        // 3x3 커널 순회
+        for (int x = -1; x <= 1; ++x)
+        {
+            for (int y = -1; y <= 1; ++y)
+            {
+                float2 Offset = float2(x, y) * TexelSize;
+                // CurrentDepth - bias <= ShadowMapDepth
+                // ShadowUV + Offset에서 읽은 depth와 세번째 인자랑 비교
+                // 세번째 인자가 더 작으면 true -> 1.0 반환 (빛 받음)
+                // 아니라면 false -> 0.0 반환 (그림자)
+     
+                Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowBias);
+            }
+        }
+        // 9개 평균 계산하여 부드러운 그림자 값
+        Shadow /= 9.0f;
+        return Shadow;
+    }
+    else if(UseVSM > 0.5f)
+    {
+        // VSM: configurable smoothing via mip bias
+        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
+        static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
+        static const float VSM_BleedReduction = 0.2f; // 0..1, higher reduces light bleeding
+
+        // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
+        float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
+
+        // Clamp depth into [0,1] and apply small bias
+        float z = saturate(CurrentDepth - ShadowBias);
+        float m1 = Moments.x;
+        float m2 = Moments.y;
+
+        // Variance and Chebyshev upper bound
+        float variance = max(m2 - m1 * m1, VSM_MinVariance);
+        float d = z - m1;
+        float pMax = saturate(variance / (variance + d * d));
+
+        // Light bleeding reduction
+        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+        return visibility;
+    }
+    return 1.0f;
 }
 
 // 기존 코드가 호출하는 CalculateShadowFactor를 PSM으로 매핑
@@ -584,6 +661,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     float4 finalPixel = float4(0.0f, 0.0f, 0.0f, 1.0f);
     float2 UV = Input.Tex;
     float3 ShadedWorldNormal = SafeNormalize3(Input.WorldNormal);
+    
     if (MaterialFlags & HAS_NORMAL_MAP)
     {
         ShadedWorldNormal = ComputeNormalMappedWorldNormal(UV, Input.WorldNormal, Input.WorldTangent);

@@ -157,10 +157,12 @@ VS_OUTPUT mainVS(VS_INPUT input)
 }
 
 // Pixel Shader
-// 기본 Depth Shadow Map (나중에 VSM 추가 가능)
-void mainPS()
+// 기본 Depth Shadow Map
+float2 mainPS(PS_INPUT input) : SV_Target
 {
-    // Depth는 자동으로 Depth Buffer에 기록
-    // Pixel Shader에서 특별히 할 일이 없음
-    // 나중에 VSM을 구현할 때는 float2(depth, depth^2)를 반환
+    float Depth = saturate(input.Depth);
+    float m1 = Depth;
+    float m2 = Depth * Depth + 1e-6f;
+
+    return float2(m1, m2);
 }
