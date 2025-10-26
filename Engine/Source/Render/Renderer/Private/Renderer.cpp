@@ -835,15 +835,18 @@ void URenderer::RenderLevel(FViewport* InViewport)
 	{
 		FinalVisiblePrims = InViewport->GetViewportClient()->GetCamera()->GetViewVolumeCuller().GetRenderableObjects();
 	}
-	FRenderingContext RenderingContext(
 
+	FRenderingContext RenderingContext(
 		&ViewProj,
 		InViewport->GetViewportClient()->GetCamera(),
 		InViewport->GetViewportClient()->GetViewMode(),
 		CurrentLevel->GetShowFlags(),
 		InViewport->GetRenderRect(),
-		{DeviceResources->GetViewportInfo().Width, DeviceResources->GetViewportInfo().Height}
-		);
+		{DeviceResources->GetViewportInfo().Width, DeviceResources->GetViewportInfo().Height},
+		CurrentLevel->GetShadowProjectionType(),
+		CurrentLevel->GetShadowFilterType()
+	);
+
 	// 1. Sort visible primitive components
 	RenderingContext.AllPrimitives = FinalVisiblePrims;
 	for (auto& Prim : FinalVisiblePrims)

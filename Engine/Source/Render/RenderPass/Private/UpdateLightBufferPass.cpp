@@ -58,9 +58,92 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
 {
     // Context에 이미 수집된 Light 컴포넌트들을 사용
     // Shadow Map 베이킹 실행
-    BakeShadowMap(Context);
+    //BakeShadowMap(Context);
+    NewBakeShadowMap(Context);
 }
 
+
+void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
+{
+    // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow))
+    {
+        UE_LOG("Shadow rendering disabled by ShowFlags.");
+        return;
+    }
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+
+
+    // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
+    const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+    const EShadowFilterType FilterType = Context.ShadowFilterType;
+    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+
+
+    // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+    // Store the original viewport
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+    // Store the original Render Targets
+    ID3D11RenderTargetView* OriginalRTVs = nullptr;
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
+
+
+    // +-+-+ GENERATE SHADOWS BASED ON THE PROJECTION METHOD +-+-+
+    switch (ProjectionType)
+    {
+    case EShadowProjectionType::Default:
+    {
+        switch (FilterType)
+        {
+        case EShadowFilterType::None:   break;
+        case EShadowFilterType::PCF:    break;
+        case EShadowFilterType::VSM:    break;
+        default:
+            UE_LOG("Unknown filter type for Default Shadow.");
+            break;
+        }
+    }
+    case EShadowProjectionType::PSM:
+    {
+        switch (FilterType)
+        {
+        case EShadowFilterType::None:   break;
+        case EShadowFilterType::PCF:    break;
+        case EShadowFilterType::VSM:    break;
+        default:
+            UE_LOG("Unknown filter type for PSM Shadow.");
+            break;
+        }
+    }
+    case EShadowProjectionType::CSM:
+    {
+        switch (FilterType)
+        {
+        case EShadowFilterType::None:   break;
+        case EShadowFilterType::PCF:    break;
+        case EShadowFilterType::VSM:    break;
+        default:
+            UE_LOG("Unknown filter type for CSM Shadow.");
+            break;
+        }
+    }
+    default:
+        UE_LOG("Invalid Shadow Projection Type.");
+        break;
+    }
+
+
+    // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    DeviceContext->RSSetViewports(1, &OriginalViewport);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
 
 void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 {

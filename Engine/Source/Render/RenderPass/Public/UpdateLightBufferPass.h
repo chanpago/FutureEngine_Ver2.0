@@ -32,6 +32,7 @@ public:
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
 private:
+	void NewBakeShadowMap(FRenderingContext& Context);
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
 

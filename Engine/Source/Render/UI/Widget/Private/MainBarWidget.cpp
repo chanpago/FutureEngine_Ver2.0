@@ -531,6 +531,58 @@ void UMainBarWidget::RenderShowFlagsMenu()
 			CurrentLevel->SetShowFlags(ShowFlags);
 		}
 
+		// Projection Type
+		if (ImGui::BeginMenu("투영 방식"))
+		{
+			EShadowProjectionType currentProj = CurrentLevel->GetShadowProjectionType();
+
+			// '단일(Single)' 투영 방식으로 설정
+			if (ImGui::MenuItem("LVM (Default)", nullptr, currentProj == EShadowProjectionType::Default))
+			{
+				CurrentLevel->SetShadowProjectionType(EShadowProjectionType::Default);
+			}
+			// 'PSM' 투영 방식으로 설정
+			if (ImGui::MenuItem("PSM (Perspective)", nullptr, currentProj == EShadowProjectionType::PSM))
+			{
+				CurrentLevel->SetShadowProjectionType(EShadowProjectionType::PSM);
+			}
+			// 'CSM' 투영 방식으로 설정
+			if (ImGui::MenuItem("CSM (Cascaded)", nullptr, currentProj == EShadowProjectionType::CSM))
+			{
+				CurrentLevel->SetShadowProjectionType(EShadowProjectionType::CSM);
+			}
+
+			ImGui::EndMenu();
+		}
+
+		// Filtering Type
+		if (ImGui::BeginMenu("필터링 방식"))
+		{
+			EShadowFilterType currentFilter = CurrentLevel->GetShadowFilterType();
+
+			// PCF
+			bool isPcfSelected = (currentFilter == EShadowFilterType::PCF);
+			if (ImGui::MenuItem("PCF (Percentage)", nullptr, isPcfSelected))
+			{
+				if (isPcfSelected) // MenuItem을 클릭하기 전 상태가 PCF였다면 끄기
+					CurrentLevel->SetShadowFilterType(EShadowFilterType::None);
+				else
+					CurrentLevel->SetShadowFilterType(EShadowFilterType::PCF);
+			}
+
+			// VSM
+			bool isVsmSelected = (currentFilter == EShadowFilterType::VSM);
+			if (ImGui::MenuItem("VSM (Variance)", nullptr, isVsmSelected))
+			{
+				if (isVsmSelected) // MenuItem을 클릭하기 전 상태가 VSM이었다면 끄기
+					CurrentLevel->SetShadowFilterType(EShadowFilterType::None);
+				else
+					CurrentLevel->SetShadowFilterType(EShadowFilterType::VSM);
+			}
+
+			ImGui::EndMenu();
+		}
+
 		ImGui::EndMenu();
 	}
 }
