@@ -17,8 +17,8 @@ UDirectionalLightComponent::UDirectionalLightComponent()
 {
     Intensity = 3.0f;
 
-    ShadowBias = 0.001f;
-    ShadowSlopeBias = 0.8f;
+    ShadowBias = 0.002f;       // 0.001 → 0.002 (shadow acne 방지)
+    ShadowSlopeBias = 0.05f;   // 0.01 → 0.05 (adaptive bias 강화)
 
     UAssetManager& ResourceManager = UAssetManager::GetInstance();
 

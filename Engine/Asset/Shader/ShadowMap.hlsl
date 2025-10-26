@@ -121,13 +121,16 @@ VS_OUTPUT mainVS(VS_INPUT input)
         // 월드 텍셀 길이 근사
         if (bUsePSM == 0)
         {
+            // LVP (Light View Projection)
             float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
+            // ★ LVP에도 L_texel 상한선 설정 (먼 거리에서 bias 폭발 방지)
+            L_texel = min(L_texel, 2.0);  // 최대 2 unit으로 제한
             biasDist = a + b * L_texel;
         }
         else if (bUsePSM == 1)
         {
+            // PSM (Perspective Shadow Maps)
             float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
-
             // ★ L_texel에 상한선 설정
             L_texel = min(L_texel, 1.0);  // 최대 1 unit으로 제한
             biasDist = a + b * L_texel;
