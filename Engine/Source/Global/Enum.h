@@ -163,9 +163,9 @@ enum class EEngineShowFlags : uint64
 	SF_FXAA = 1 << 5,
 	SF_Fog = 1 << 6,
 	SF_Octree = 1 << 7,
-	SF_VSM    = 1 << 8,
+	SF_VSM = 1 << 8,
 	SF_PCF = 1 << 9,
-	SF_CSM	  = 1 << 10,
+	SF_CSM = 1 << 10,
 };
 
 inline uint64 operator|(EEngineShowFlags lhs, EEngineShowFlags rhs)

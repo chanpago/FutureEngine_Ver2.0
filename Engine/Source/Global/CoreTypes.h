@@ -177,8 +177,8 @@ struct FShadowMapConstants
 	FMatrix EyeProj;       // P_e
 	FMatrix EyeViewProjInv;// (P_e * V_e)^(-1)
 	
-	FMatrix LightViewP[MAX_CASCADES];    // V_L'
-	FMatrix LightProjP[MAX_CASCADES];    // P_L'
+	FMatrix LightViewP;    // V_L'
+	FMatrix LightProjP;    // P_L'
 	FMatrix LightViewPInv;  // (V'_L)^(-1)
 	
 	FVector4 ShadowParams; // x: depthBias, y: (reserved)
@@ -186,12 +186,9 @@ struct FShadowMapConstants
 	uint32  bInvertedLight;// 0: normal, 1: inverted (방향광에서는 보통 0)
 
 	FVector4 LightOrthoParams;             // (l, r, b, t)
-	FVector4 CascadeSplits;
-
 	FVector2 ShadowMapSize;                // (Sx, Sy)
 	uint32	bUsePSM;
-	uint32  bUseVSM; // 0 = depth compare, 1 = VSM                      
+	uint32  bUseVSM;                      
 	uint32  bUsePCF;
-	uint32  bUseCSM; // 0 = no CSM, 1 = enable CSM
-	float   Padding[2];
+	float   Padding[3];
 };

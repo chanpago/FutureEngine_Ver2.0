@@ -27,16 +27,22 @@ public:
 
 	FVector4 GetLightOrthoLTRB() const {return LightOrthoLTRB;}
 
+	// Calculate Cascade split distance
+	void CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera);
+	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
+
 private:
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
 
+	// Shadow Map Shaders
 	ID3D11VertexShader* ShadowMapVS = nullptr;
 	ID3D11PixelShader* ShadowMapPS = nullptr;
 	ID3D11InputLayout* ShadowMapInputLayout = nullptr;
 	ID3D11Buffer* LightCameraConstantBuffer = nullptr;
 	ID3D11Buffer* PSMConstantBuffer = nullptr;
 
+	// Shadow Map Viewports
 	D3D11_VIEWPORT DirectionalShadowViewport;
 	D3D11_VIEWPORT SpotShadowViewport;
 	D3D11_VIEWPORT PointShadowViewport;
@@ -47,5 +53,7 @@ private:
 	FMatrix CachedEyeProj;  // PSM 베이킹 시 사용한 카메라 P_e
 	
 	FVector4 LightOrthoLTRB = FVector4(-1, 1, -1, 1);
-	
+
+	// For Cascade
+	FShadowMapConstants CascadedShadowMapConstants;
 };
