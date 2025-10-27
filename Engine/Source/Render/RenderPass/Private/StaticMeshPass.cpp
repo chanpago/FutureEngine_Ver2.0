@@ -9,6 +9,8 @@
 #include "Component/Public/DirectionalLightComponent.h"
 #include "Component/Public/SpotLightComponent.h"
 
+
+
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
 	: FRenderPass(InPipeline, InConstantBufferCamera, InConstantBufferModel), VS(InVS), PS(InPS), InputLayout(InLayout), DS(InDS)
@@ -16,6 +18,8 @@ FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstant
 	ConstantBufferMaterial = FRenderResourceFactory::CreateConstantBuffer<FMaterialConstants>();
 	ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
 	ConstantBufferSpotShadow = FRenderResourceFactory::CreateConstantBuffer<FSpotShadowConstants>();
+	// TODO: Add ID3D11Buffer* ConstantBufferPointShadow; to StaticMeshPass.h
+	ConstantBufferPointShadow = FRenderResourceFactory::CreateConstantBuffer<FPointShadowConstants>();
 }
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
@@ -215,17 +219,68 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		}
 		else
 		{
-			// No spot shadow caster: clear bindings to avoid sampling invalid SRV/CB
-			Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
-			Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
+		     // No spot shadow caster: clear bindings to avoid invalid SRV/CB
+		     Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
+		     Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
 		}
-	}
+		
+		 // Bind point light shadow (single caster for now)
+		 if (!Context.PointLights.empty())
+		 {
+		     UPointLightComponent* PointCaster = nullptr;
+		     int lightIndex = 0;
+		     for (int i = 0; i < Context.PointLights.size(); ++i)
+		     {
+		         // if (Context.PointLights[i] && Context.PointLights[i]->GetCastShadows()) // GetCastShadows() is not implemented yet
+		         // {
+		             PointCaster = Context.PointLights[i];
+		             lightIndex = i;
+		             break;
+		         // }
+		     }
+		
+		     if (PointCaster)
+		     {
+		         FPointShadowConstants PointConsts = {};
+		         PointConsts.LightPos = PointCaster->GetWorldLocation();
+		         PointConsts.FarPlane = PointCaster->GetAttenuationRadius();
+		         PointConsts.ShadowBias = 0.05f;
+		         PointConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
+		         PointConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
+		         PointConsts.ShadowMapIndex = lightIndex;
+		
+		         FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferPointShadow, PointConsts);
+		         Pipeline->SetConstantBuffer(8, EShaderType::PS, ConstantBufferPointShadow);
 
-	/**
-	* @todo Find a better way to reduce depdency upon Renderer class.
-	* @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
-	*/
-
+				 const auto& DeviceResources = Renderer.GetDeviceResources();
+		         				ID3D11ShaderResourceView* PointSRV = DeviceResources->GetPointShadowMapColorSRV();
+		         				Pipeline->SetShaderResourceView(13, EShaderType::PS, PointSRV);
+		         
+		         				// Bind samplers for point light shadow
+		         				if (FilterType == EShadowFilterType::PCF)
+		         				{
+		         					Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+		         				}
+		         				else if (FilterType == EShadowFilterType::VSM)
+		         				{
+		         					Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+		         				}
+		         				else
+		         				{
+		         					Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+		         				}
+		         			}
+		         		}
+		         		else
+		         		{
+		         			Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
+		         			Pipeline->SetConstantBuffer(8, EShaderType::PS, nullptr);
+		         		}	}
+		
+		    /**
+		    * @todo Find a better way to reduce depdency upon Renderer class.
+		    * @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
+		    */
 	// +-+ RTVS SETUP +-+
 	const auto& DeviceResources = Renderer.GetDeviceResources();
 	ID3D11RenderTargetView* RTV = nullptr;
@@ -350,4 +405,5 @@ void FStaticMeshPass::Release()
 	SafeRelease(ConstantBufferMaterial);
 	SafeRelease(ConstantBufferShadowMap);
 	SafeRelease(ConstantBufferSpotShadow);
+	SafeRelease(ConstantBufferPointShadow);
 }

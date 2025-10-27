@@ -60,6 +60,11 @@ public:
 	ID3D11DepthStencilView* GetSpotShadowMapDSV() const { return SpotShadowMapDSV; }
 	ID3D11ShaderResourceView* GetSpotShadowMapSRV() const { return SpotShadowMapSRV; }
 
+	// Point Light Shadow Map Getters
+	ID3D11DepthStencilView* GetPointShadowMapDSV() const { return PointShadowMapDSV; }
+	ID3D11ShaderResourceView* GetPointShadowMapColorSRV() const { return PointShadowMapColorSRV; }
+	ID3D11RenderTargetView* GetPointShadowMapColorRTV(uint32 index) const { return PointShadowMapColorRTVs[index]; }
+
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
 	ID3D11Texture2D* GetSceneColorTexture() const {return SceneColorTexture; }
@@ -113,16 +118,16 @@ private:
 	ID3D11Texture2D* DirectionalShadowMapColorTexture = nullptr;
 
 	// Point Light Shadow Map
-	// R32_FLOAT Æ÷¸ËÀÇ Å¥ºê¸Ê ¹è¿­ ÅØ½ºÃ³
+	// R32_FLOAT í¬ë§·ì˜ íë¸Œë§µ ë°°ì—´ í…ìŠ¤ì²˜
 	ID3D11Texture2D* PointShadowMapColorTexture = nullptr; // Texture2DArray for multiple point lights, each containing a cube map
-	// ÅØ½ºÃ³ °¢ ¸é¿¡ ¾²±â À§ÇÑ RTV ¹è¿­
+	// í…ìŠ¤ì²˜ ê° ë©´ì— ì“°ê¸° ìœ„í•œ RTV ë°°ì—´
 	ID3D11RenderTargetView* PointShadowMapColorRTVs[NUM_POINT_LIGHT * 6] = {};
-	// Å¥ºê¸Ê ¹è¿­ ÅØ½ºÃ³ ÀüÃ¼¸¦ UberLit¿¡¼­ ÀĞ±â À§ÇÑ SRV
+	// íë¸Œë§µ ë°°ì—´ í…ìŠ¤ì²˜ ì „ì²´ë¥¼ UberLitì—ì„œ ì½ê¸° ìœ„í•œ SRV
 	ID3D11ShaderResourceView* PointShadowMapColorSRV = nullptr; // SRV for the entire texture array
 
-	// Shadow MapÀ» ¸¸µå´Â µ¿¾È Z-test¸¦ È°¼ºÈ­ÇÏ±â À§ÇÑ ÀÓ½Ã ±íÀÌ ¹öÆÛ
-	ID3D11Texture2D* PointShadowMapTexture = nullptr; // D32_FLOAT Æ÷¸ËÀÇ 1024x1024 ÅØ½ºÃ³
-	ID3D11DepthStencilView* PointShadowMapDSV = nullptr; // À§ ÅØ½ºÃ³¿¡ ¾²±â À§ÇÑ DSV
+	// Shadow Mapì„ ë§Œë“œëŠ” ë™ì•ˆ Z-testë¥¼ í™œì„±í™”í•˜ê¸° ìœ„í•œ ì„ì‹œ ê¹Šì´ ë²„í¼
+	ID3D11Texture2D* PointShadowMapTexture = nullptr; // D32_FLOAT í¬ë§·ì˜ 1024x1024 í…ìŠ¤ì²˜
+	ID3D11DepthStencilView* PointShadowMapDSV = nullptr; // ìœ„ í…ìŠ¤ì²˜ì— ì“°ê¸° ìœ„í•œ DSV
 
 	// Spot Light Shadow Map
 	ID3D11Texture2D* SpotShadowMapTexture = nullptr;

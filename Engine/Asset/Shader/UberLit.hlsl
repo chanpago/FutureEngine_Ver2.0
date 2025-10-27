@@ -142,6 +142,16 @@ cbuffer SpotShadowConstants : register(b7)
     float SpotPadding;
 };
 
+cbuffer PointShadowConstants : register(b8)
+{
+    float3 LightPos;
+    float FarPlane;
+    float ShadowBias;
+    uint bUseVSM_Point;
+    uint bUsePCF_Point;
+    int ShadowMapIndex;
+};
+
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
@@ -149,6 +159,7 @@ StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
 Texture2DArray CascadedShadowMapTexture : register(t11);
 Texture2D SpotShadowMapTexture : register(t12);
+TextureCubeArray g_PointShadowMapTexture : register(t13);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -385,6 +396,47 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
     
     return Shadow;
 }*/
+float CalculatePointVSM(float2 Moments, float CurrentDepth, float Bias)
+{
+    static const float VSM_MinVariance = 1e-5f;
+    static const float VSM_BleedReduction = 0.2f;
+
+    float z = saturate(CurrentDepth - Bias);
+    float m1 = Moments.x;
+    float m2 = Moments.y;
+
+    float variance = max(m2 - m1 * m1, VSM_MinVariance);
+    float d = z - m1;
+    float pMax = saturate(variance / (variance + d * d));
+
+    return (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+}
+
+float CalculatePointShadowFactor(float3 worldPos)
+{
+    if (ShadowMapIndex < 0) return 1.0;
+
+    float3 lightToFrag = worldPos - LightPos;
+    float currentDepth = length(lightToFrag) / FarPlane;
+
+    if (bUseVSM_Point)
+    {
+        float2 moments = g_PointShadowMapTexture.Sample(SamplerLinearClamp, float4(lightToFrag, ShadowMapIndex)).rg;
+        return CalculatePointVSM(moments, currentDepth, ShadowBias);
+    }
+    else if (bUsePCF_Point)
+    {
+        float compareDepth = currentDepth - ShadowBias;
+        // Simple 1-tap PCF
+        return g_PointShadowMapTexture.SampleCmpLevelZero(SamplerPCF, float4(lightToFrag, ShadowMapIndex), compareDepth);
+    }
+    else // Simple depth comparison
+    {
+        float shadowMapDepth = g_PointShadowMapTexture.Sample(SamplerShadow, float4(lightToFrag, ShadowMapIndex)).r;
+        return (currentDepth - ShadowBias > shadowMapDepth) ? 0.0f : 1.0f;
+    }
+}
+
 float PSM_Visibility(float3 worldPos)
 {
     // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
@@ -904,8 +956,20 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     uint PointLightCount = GetPointLightCount(LightIndicesOffset);
     for (uint i = 0; i < PointLightCount ; i++)
     {
-        FPointLightInfo PointLight = GetPointLight(LightIndicesOffset + i);
-        ADD_ILLUM(Illumination, CalculatePointLight(PointLight, N, Input.WorldPosition, ViewWorldLocation));
+        uint lightInfoIdx = PointLightIndices[LightIndicesOffset + i];
+        FPointLightInfo PointLight = PointLightInfos[lightInfoIdx];
+        
+        FIllumination P_Illum = CalculatePointLight(PointLight, N, Input.WorldPosition, ViewWorldLocation);
+
+        // Apply point light shadow
+        if (lightInfoIdx == ShadowMapIndex)
+        {
+            float pointShadowFactor = CalculatePointShadowFactor(Input.WorldPosition);
+            P_Illum.Diffuse *= pointShadowFactor;
+            P_Illum.Specular *= pointShadowFactor;
+        }
+        
+        ADD_ILLUM(Illumination, P_Illum);
     }
     
     // 4. Spot Lights

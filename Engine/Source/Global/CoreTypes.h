@@ -211,3 +211,12 @@ struct FSpotShadowConstants
     uint32  bUsePCF;        // 0/1
     float   Padding;        // align to 16 bytes
 };
+struct FPointShadowConstants
+{
+	FVector LightPos;
+	float FarPlane;
+	float ShadowBias;
+	uint32 bUseVSM;
+	uint32 bUsePCF;
+	int ShadowMapIndex;
+};

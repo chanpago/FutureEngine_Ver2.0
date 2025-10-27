@@ -45,7 +45,7 @@ public:
 private:
 	void NewBakeShadowMap(FRenderingContext& Context);
 	void BakeSpotShadowMap(FRenderingContext& Context);
-	
+	void BakePointShadowMap(FRenderingContext& Context);
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
 

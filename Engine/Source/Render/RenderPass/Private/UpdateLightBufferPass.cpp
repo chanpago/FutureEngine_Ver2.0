@@ -61,6 +61,7 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
     //BakeShadowMap(Context);
     NewBakeShadowMap(Context);
     BakeSpotShadowMap(Context);
+    BakePointShadowMap(Context);
 }
 
 void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
@@ -237,6 +238,137 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
     DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
+
+void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
+{
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
+
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+    auto DeviceResources = Renderer.GetDeviceResources();
+
+    // Store original state
+    ID3D11ShaderResourceView* NullSRV[1] = { nullptr };
+    DeviceContext->PSSetShaderResources(13, 1, NullSRV); // Unbind point shadow map slot
+
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+
+    ID3D11RenderTargetView* OriginalRTV = nullptr;
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTV, &OriginalDSV);
+
+    // Set up pipeline
+    const EShadowFilterType FilterType = Context.ShadowFilterType;
+    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
+    FPipelineInfo PipelineInfo = {
+        ShadowMapInputLayout,
+        ShadowMapVS,
+        RS,
+        URenderer::GetInstance().GetDefaultDepthStencilState(),
+        URenderer::GetInstance().GetPixelShader(FilterType), // For VSM
+        nullptr,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    };
+    Pipeline->UpdatePipeline(PipelineInfo);
+
+    // Set viewport for point light shadow map
+    DeviceContext->RSSetViewports(1, &PointShadowViewport);
+
+    // 90-degree perspective projection for cubemap faces
+    const float zn = 0.1f;
+    FMatrix Proj = FMatrix::Identity();
+    const float fov = 90.0f * (3.1415926535f / 180.0f);
+    const float aspect = 1.0f;
+    const float yScale = 1.0f / tanf(fov * 0.5f);
+    const float xScale = yScale / aspect;
+    Proj.Data[0][0] = xScale;
+    Proj.Data[1][1] = yScale;
+    Proj.Data[2][3] = 1.0f;
+    Proj.Data[3][3] = 0.0f;
+
+    auto buildViewMatrixLH = [](const FVector& eye, const FVector& target, const FVector& upHint) {
+        FVector fwd = (target - eye).GetNormalized();
+        FVector right = upHint.Cross(fwd).GetNormalized();
+        FVector up = fwd.Cross(right);
+
+        FMatrix V = FMatrix::Identity();
+        V.Data[0][0] = right.X; V.Data[0][1] = up.X; V.Data[0][2] = fwd.X;
+        V.Data[1][0] = right.Y; V.Data[1][1] = up.Y; V.Data[1][2] = fwd.Y;
+        V.Data[2][0] = right.Z; V.Data[2][1] = up.Z; V.Data[2][2] = fwd.Z;
+        V.Data[3][0] = -eye.Dot(right);
+        V.Data[3][1] = -eye.Dot(up);
+        V.Data[3][2] = -eye.Dot(fwd);
+        return V;
+    };
+
+    ID3D11DepthStencilView* dsv = DeviceResources->GetPointShadowMapDSV();
+    DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+    // Loop through point lights
+    for (int lightIndex = 0; lightIndex < Context.PointLights.size(); ++lightIndex)
+    {
+        if (lightIndex >= NUM_POINT_LIGHT) break;
+
+        UPointLightComponent* pLight = Context.PointLights[lightIndex];
+        if (!pLight) continue;
+
+        const FVector lightPos = pLight->GetWorldLocation();
+        const float zf = std::max(zn + 0.1f, pLight->GetAttenuationRadius());
+        
+        Proj.Data[2][2] = zf / (zf - zn);
+        Proj.Data[3][2] = -zn * zf / (zf - zn);
+
+        FMatrix views[6];
+        views[0] = buildViewMatrixLH(lightPos, lightPos + FVector(1, 0, 0), FVector(0, 1, 0));  // +X
+        views[1] = buildViewMatrixLH(lightPos, lightPos + FVector(-1, 0, 0), FVector(0, 1, 0)); // -X
+        views[2] = buildViewMatrixLH(lightPos, lightPos + FVector(0, 1, 0), FVector(0, 0, -1)); // +Y
+        views[3] = buildViewMatrixLH(lightPos, lightPos + FVector(0, -1, 0), FVector(0, 0, 1)); // -Y
+        views[4] = buildViewMatrixLH(lightPos, lightPos + FVector(0, 0, 1), FVector(0, 1, 0));  // +Z
+        views[5] = buildViewMatrixLH(lightPos, lightPos + FVector(0, 0, -1), FVector(0, 1, 0)); // -Z
+
+        for (int faceIndex = 0; faceIndex < 6; ++faceIndex)
+        {
+            ID3D11RenderTargetView* rtv = DeviceResources->GetPointShadowMapColorRTV(lightIndex * 6 + faceIndex);
+            
+            if (FilterType == EShadowFilterType::VSM)
+            {
+                DeviceContext->OMSetRenderTargets(1, &rtv, dsv);
+                const float ClearColor[4] = { zf, zf * zf, 0.0f, 0.0f }; // VSM clear
+                DeviceContext->ClearRenderTargetView(rtv, ClearColor);
+            }
+            else
+            {
+                DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+            }
+
+            FShadowMapConstants CasterConsts = {};
+            CasterConsts.bUsePSM = 0; // Use simple World->Light transform
+            CasterConsts.LightViewP[0] = views[faceIndex];
+            CasterConsts.LightProjP[0] = Proj;
+            CasterConsts.ShadowParams = FVector4(0.005f, 0.0f, 0.0f, 0.0f); // Basic bias
+            CasterConsts.bUseVSM = (FilterType == EShadowFilterType::VSM);
+            CasterConsts.ShadowMapSize = FVector2(PointShadowViewport.Width, PointShadowViewport.Height);
+            
+            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, CasterConsts);
+
+            for (auto MeshComp : Context.StaticMeshes)
+            {
+                if (!MeshComp || !MeshComp->IsVisible()) continue;
+                RenderPrimitive(MeshComp);
+            }
+        }
+    }
+
+    // Restore original state
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    DeviceContext->RSSetViewports(1, &OriginalViewport);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTV, OriginalDSV);
+
+    if (OriginalRTV) OriginalRTV->Release();
+    if (OriginalDSV) OriginalDSV->Release();
 }
 
 void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
