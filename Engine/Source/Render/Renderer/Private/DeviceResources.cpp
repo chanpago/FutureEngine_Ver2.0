@@ -23,7 +23,7 @@ void UDeviceResources::Create(HWND InWindowHandle)
 	CreateNormalBuffer();
 	CreateDepthBuffer();
 	CreateSceneColorTarget();
-	CreateDirectionalShadowMapResources();  // TODO: 임시 비활성화
+	CreateShadowMapResources();  // TODO: 임시 비활성화
 	CreateCascadedShadowMap();
 	CreateFactories();
 }

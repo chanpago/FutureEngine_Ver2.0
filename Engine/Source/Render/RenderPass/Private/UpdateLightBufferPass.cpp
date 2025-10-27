@@ -90,6 +90,9 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 
     // TODO: Spotlight, point light shadow map 렌더링
 
+    // Spot lights (LVP perspective)
+    RenderSpotShadowSimple(Context);
+
     // End shadow-bake (unbind and restore viewport)
     EndShadowBake(DeviceContext, SavedViewport);
     // 원본 Render Targets 복원
@@ -167,6 +170,33 @@ FMatrix FUpdateLightBufferPass::BuildDirectionalLightViewMatrix(const UDirection
     return LightView;
 }
 
+void FUpdateLightBufferPass::BindSpotShadowTargetsAndClear(ID3D11DeviceContext* DeviceContext,
+    ID3D11DepthStencilView*& OutDSV, ID3D11RenderTargetView*& OutRTV) const
+{
+    const auto& Renderer = URenderer::GetInstance();
+    OutDSV = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
+    OutRTV = Renderer.GetDeviceResources()->GetSpotShadowMapColorRTV();
+
+    // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(12, 1, &NullSRV);
+
+    DeviceContext->OMSetRenderTargets(1, &OutRTV, OutDSV);
+    const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+    DeviceContext->ClearRenderTargetView(OutRTV, ClearMoments);
+    DeviceContext->ClearDepthStencilView(OutDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    DeviceContext->RSSetViewports(1, &SpotShadowViewport);
+}
+
+FMatrix FUpdateLightBufferPass::BuildSpotLightViewMatrix(const USpotLightComponent* Light) const
+{
+    FVector Eye = Light->GetWorldLocation();
+    FVector Fwd = Light->GetForwardVector().GetNormalized();
+    FVector At  = Eye + Fwd;
+    FVector UpHint = (fabsf(Fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+    return BuildLookAtRowLH(Eye, At, UpHint);
+}
+
 void FUpdateLightBufferPass::ComputeDirectionalOrthoBounds(const FMatrix& LightView,
     const FVector& SceneMin, const FVector& SceneMax, float& OutMinX, float& OutMaxX,
     float& OutMinY, float& OutMaxY, float& OutMinZ, float& OutMaxZ) const
@@ -216,6 +246,20 @@ FMatrix FUpdateLightBufferPass::OrthoRowLH(float l, float r, float b, float t, f
     M.Data[3][0] =  (l+r)/(l-r);
     M.Data[3][1] =  (t+b)/(b-t);
     M.Data[3][2] =  -zn/(zf-zn);
+    return M;
+}
+
+FMatrix FUpdateLightBufferPass::PerspectiveRowLH(float fovY, float aspect, float zn, float zf) const
+{
+    float yScale = 1.0f / tanf(fovY * 0.5f);
+    float xScale = yScale / std::max(1e-6f, aspect);
+    FMatrix M = FMatrix::Identity();
+    M.Data[0][0] = xScale;
+    M.Data[1][1] = yScale;
+    M.Data[2][2] = zf / (zf - zn);
+    M.Data[3][2] = (-zn * zf) / (zf - zn);
+    M.Data[2][3] = 1.0f;
+    M.Data[3][3] = 0.0f;
     return M;
 }
 
@@ -639,6 +683,72 @@ void FUpdateLightBufferPass::RenderDirectionalCSM(FRenderingContext& Context)
     }
 }
 
+void FUpdateLightBufferPass::RenderSpotShadowSimple(FRenderingContext& Context)
+{
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+
+    // Iterate each visible spot light and bake its shadow map (single map for now)
+    for (auto* Spot : Context.SpotLights)
+    {
+        if (!Spot || !Spot->GetVisible() || !Spot->GetLightEnabled()) continue;
+
+        // Bind spot shadow targets and clear
+        ID3D11DepthStencilView* SpotDSV = nullptr;
+        ID3D11RenderTargetView* SpotRTV = nullptr;
+        BindSpotShadowTargetsAndClear(DeviceContext, SpotDSV, SpotRTV);
+
+        // Build view/projection for the spotlight (perspective)
+        FMatrix V = BuildSpotLightViewMatrix(Spot);
+        float outer = Spot->GetOuterConeAngle();      // radians (half-angle)
+        float fovY = std::max(outer * 2.0f, 0.1f);    // clamp small
+        float aspect = 1.0f;
+        float zn = 0.1f;
+        float zf = std::max(Spot->GetAttenuationRadius(), 1.0f);
+        FMatrix P = PerspectiveRowLH(fovY, aspect, zn, zf);
+
+        // Fill constants for LVP-like path (Eye matrices unused)
+        FShadowMapConstants C{};
+        C.EyeView = V;
+        C.EyeProj = P;
+        C.EyeViewProjInv = P.Inverse();
+        C.LightViewP[0] = V;
+        C.LightProjP[0] = P;
+        C.LightViewPInv[0] = V.Inverse();
+        // Conservative bias defaults for perspective spotlight
+        C.ShadowParams = FVector4(0.0015f, 0.0f, 0.0f, 0.0f);
+        C.LightDirWS = (Spot->GetForwardVector() * -1.0f).GetNormalized();
+        C.bInvertedLight = 0;
+        C.LightOrthoParams = FVector4(0,0,0,0); // not used for perspective
+        C.ShadowMapSize = FVector2(SpotShadowViewport.Width, SpotShadowViewport.Height);
+        C.bUsePSM = 0; // use direct world->light VP path in shader
+
+        FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, C);
+
+        // Cache back into component so shading uses identical V/P
+        Spot->SetShadowMatrices(V, P);
+
+        // Setup pipeline and draw receivers
+        FPipelineInfo Pipe = {
+            ShadowMapInputLayout,
+            ShadowMapVS,
+            FRenderResourceFactory::GetRasterizerState({ECullMode::None, EFillMode::Solid}),
+            URenderer::GetInstance().GetDefaultDepthStencilState(),
+            ShadowMapPS,
+            nullptr,
+            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+        };
+        Pipeline->UpdatePipeline(Pipe);
+        Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
+        Pipeline->SetConstantBuffer(6, EShaderType::VS, PSMConstantBuffer);
+
+        DrawAllStaticReceivers(Context);
+
+        // For now, bake only the first spotlight's map per frame
+        // Remove break to bake all spotlights into an atlas/array in the future
+        break;
+    }
+}
 
 void FUpdateLightBufferPass::RenderPrimitive(UStaticMeshComponent* MeshComp)
 {

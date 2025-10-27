@@ -179,17 +179,18 @@ void FLightPass::Execute(FRenderingContext& Context)
 		SafeRelease(PointLightStructuredBufferSRV);
 		FRenderResourceFactory::CreateStructuredShaderResourceView(PointLightStructuredBuffer, &PointLightStructuredBufferSRV);
 	}
-	if (SpotLightBufferCount < SpotLightCount)
-	{
-		while (SpotLightBufferCount < SpotLightCount)
-		{
-			SpotLightBufferCount = SpotLightBufferCount << 1;
-		}
-		SafeRelease(SpotLightStructuredBuffer);
-		SpotLightStructuredBuffer = FRenderResourceFactory::CreateStructuredBuffer<FSpotLightInfo>(SpotLightBufferCount);
-		SafeRelease(SpotLightStructuredBufferSRV);
-		FRenderResourceFactory::CreateStructuredShaderResourceView(SpotLightStructuredBuffer, &SpotLightStructuredBufferSRV);
-	}
+    if (SpotLightBufferCount < SpotLightCount)
+    {
+        while (SpotLightBufferCount < SpotLightCount)
+        {
+            SpotLightBufferCount = SpotLightBufferCount << 1;
+        }
+    }
+    // Ensure buffer stride matches FSpotLightInfo layout (recreate every frame for safety)
+    SafeRelease(SpotLightStructuredBuffer);
+    SpotLightStructuredBuffer = FRenderResourceFactory::CreateStructuredBuffer<FSpotLightInfo>(std::max(SpotLightBufferCount, 1u));
+    SafeRelease(SpotLightStructuredBufferSRV);
+    FRenderResourceFactory::CreateStructuredShaderResourceView(SpotLightStructuredBuffer, &SpotLightStructuredBufferSRV);
 
 	int ThreadGroupCount = (ClusterSliceNumX * ClusterSliceNumY * ClusterSliceNumZ + CSNumThread - 1) / CSNumThread;
 

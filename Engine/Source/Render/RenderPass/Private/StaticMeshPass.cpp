@@ -134,6 +134,12 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
 			}
 
+			// Bind spot shadow map SRV (for spotlight LVP)
+			if (Renderer.GetDeviceResources()->GetSpotShadowMapSRV())
+			{
+				Pipeline->SetShaderResourceView(12, EShaderType::PS, Renderer.GetDeviceResources()->GetSpotShadowMapSRV());
+			}
+
 			// hard shadow 방식 -> sampler를 default
 			// vsm 방식 -> sampler를 clamp 
 			// pcf 방식 -> sampler를 pcf

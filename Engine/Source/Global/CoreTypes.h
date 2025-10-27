@@ -161,6 +161,10 @@ struct FSpotLightInfo
 	float OuterConeAngle;
 	float AngleFalloffExponent;
 	FVector Direction;
+
+	// Shadow mapping transforms (row-vector convention)
+	FMatrix LightView;
+	FMatrix LightProj;
 };
 
 struct FGlobalLightConstant

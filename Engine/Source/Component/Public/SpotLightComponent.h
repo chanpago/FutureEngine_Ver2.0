@@ -67,6 +67,11 @@ public:
 
     FSpotLightInfo GetSpotLightInfo() const;
 
+    // Shadow matrices cached from bake (for perfect match with depth map)
+    void SetShadowMatrices(const FMatrix& InView, const FMatrix& InProj) { ShadowLightView = InView; ShadowLightProj = InProj; }
+    const FMatrix& GetShadowLightView() const { return ShadowLightView; }
+    const FMatrix& GetShadowLightProj() const { return ShadowLightProj; }
+
 private:
     void EnsureVisualizationBillboard()override;
     
@@ -80,4 +85,8 @@ private:
     /** Angle of light source shape. */
     float OuterConeAngleRad = PI / 4.0f;
     float InnerConeAngleRad = 0.0f;
+
+    // Cached per-spot shadow transforms (row-vector LH)
+    FMatrix ShadowLightView = FMatrix::Identity();
+    FMatrix ShadowLightProj = FMatrix::Identity();
 };

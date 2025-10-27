@@ -38,6 +38,7 @@ private:
     // Refactored helpers (directional)
     void RenderDirectionalCSM(FRenderingContext& Context);
     void RenderDirectionalShadowSimple(FRenderingContext& Context);
+    void RenderSpotShadowSimple(FRenderingContext& Context);
 
     // Begin/End helpers for shadow-bake pass state
     void BeginShadowBake(ID3D11DeviceContext* DeviceContext,
@@ -54,10 +55,13 @@ private:
     // Shared small utilities (primarily for directional now; reusable for spot/point later)
     void ComputeSceneWorldAABB(const FRenderingContext& Context, FVector& OutMin, FVector& OutMax) const;
     void BindDirectionalShadowTargetsAndClear(ID3D11DeviceContext* DeviceContext, ID3D11DepthStencilView*& OutDSV, ID3D11RenderTargetView*& OutRTV) const;
+    void BindSpotShadowTargetsAndClear(ID3D11DeviceContext* DeviceContext, ID3D11DepthStencilView*& OutDSV, ID3D11RenderTargetView*& OutRTV) const;
 	
     FMatrix BuildDirectionalLightViewMatrix(const UDirectionalLightComponent* Light, const FVector& LightPosition) const;
+    FMatrix BuildSpotLightViewMatrix(const class USpotLightComponent* Light) const;
 	
     FMatrix OrthoRowLH(float l, float r, float b, float t, float zn, float zf) const;
+    FMatrix PerspectiveRowLH(float fovY, float aspect, float zn, float zf) const;
     void ComputeDirectionalOrthoBounds(const FMatrix& LightView, const FVector& SceneMin, const FVector& SceneMax,
     	float& OutMinX, float& OutMaxX, float& OutMinY, float& OutMaxY, float& OutMinZ, float& OutMaxZ) const;
 	

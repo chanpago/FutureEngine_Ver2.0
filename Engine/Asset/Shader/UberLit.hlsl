@@ -51,6 +51,8 @@ struct FSpotLightInfo
     float OuterConeAngle;
     float AngleFalloffExponent;
     float3 Direction;
+    row_major float4x4 LightView;   // per-spot shadow view
+    row_major float4x4 LightProj;   // per-spot shadow projection
 };
 
 // reflectance와 곱해지기 전
@@ -132,6 +134,7 @@ StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
 Texture2DArray CascadedShadowMapTexture : register(t11);
+Texture2D SpotShadowMapTexture : register(t12);
 
 
 
@@ -430,9 +433,31 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     return 1.0f;
 }
 
-float CalculateSpotShadowFactor(float3 worldPos)
+float CalculateSpotShadowFactor(float3 worldPos, FSpotLightInfo Spot, uint SpotInfoIndex)
 {
-    
+    // Only the first baked spotlight uses t12 in this implementation
+    if (SpotInfoIndex != 0) return 1.0f;
+
+    // World -> spot light clip
+    float4 sh = mul(mul(float4(worldPos, 1.0), Spot.LightView), Spot.LightProj);
+
+    float2 uv;
+    uv.x = sh.x / sh.w * 0.5 + 0.5;
+    uv.y = 0.5 - sh.y / sh.w * 0.5;
+    float z = sh.z / sh.w;
+    if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
+
+    const int R = 1;
+    float sum = 0.0;
+    [unroll] for (int dy=-R; dy<=R; ++dy)
+        [unroll] for (int dx=-R; dx<=R; ++dx)
+        {
+            float2 o  = float2(dx, dy) * gShadowTexel;
+            float  dz = SpotShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
+            bool lit = ((z - ShadowParams.x) <= dz);
+            sum += lit ? 1.0 : 0.0;
+        }
+    return sum / ((2*R+1)*(2*R+1));
 }
 
 // Safe Normalize Util Functions
@@ -761,11 +786,15 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
     // 4. Spot Lights
     uint SpotLightCount = GetSpotLightCount(LightIndicesOffset);
-     for (uint j = 0; j < SpotLightCount ; j++)
+    for (uint j = 0; j < SpotLightCount ; j++)
     {
-         FSpotLightInfo SpotLight = GetSpotLight(LightIndicesOffset + j);
-         // float SpotShadowFactor = CalculateSpotShadowFactor(Input.WorldPosition);
-         ADD_ILLUM(Illumination, CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation));
+        uint SpotInfoIdx = SpotLightIndices[LightIndicesOffset + j];
+        FSpotLightInfo SpotLight = SpotLightInfos[SpotInfoIdx];
+        float SpotShadowFactor = CalculateSpotShadowFactor(Input.WorldPosition, SpotLight, SpotInfoIdx);
+        FIllumination S = CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation);
+        S.Diffuse *= SpotShadowFactor;
+        S.Specular *= SpotShadowFactor;
+        ADD_ILLUM(Illumination, S);
     }
     
     finalPixel.rgb = Illumination.Ambient.rgb * ambientColor.rgb + Illumination.Diffuse.rgb * diffuseColor.rgb + Illumination.Specular.rgb * specularColor.rgb;
