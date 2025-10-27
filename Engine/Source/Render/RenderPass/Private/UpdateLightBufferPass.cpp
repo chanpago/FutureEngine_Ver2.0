@@ -85,6 +85,19 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
     ID3D11DepthStencilView* OriginalDSV = nullptr;
     DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
 
+    // +-+-+ SET UP THE PIPELINE FOR SHADOW MAP RENDERING +-+-+
+    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
+    FPipelineInfo PipelineInfo = {
+        ShadowMapInputLayout,
+        ShadowMapVS,
+        RS,
+        URenderer::GetInstance().GetDefaultDepthStencilState(),
+        URenderer::GetInstance().GetPixelShader(FilterType),  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
+        nullptr,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    };
+    Pipeline->UpdatePipeline(PipelineInfo);
+
     // +-+-+ GENERATE SHADOWS BASED ON THE PROJECTION METHOD +-+-+
     FShadowCalculationData LightData;
     CalculateShadowMatrices(ProjectionType, Context, LightData);
@@ -735,22 +748,7 @@ void FUpdateLightBufferPass::RenderPrimitive(UStaticMeshComponent* MeshComp)
 
     FStaticMesh* MeshAsset = MeshComp->GetStaticMesh()->GetStaticMeshAsset();
     if (!MeshAsset) return;
-
-    // Shadow Map 렌더링용 파이프라인 설정
-    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState(
-        { ECullMode::None, EFillMode::Solid });
     
-    FPipelineInfo PipelineInfo = {
-        ShadowMapInputLayout,
-        ShadowMapVS,
-        RS,
-        URenderer::GetInstance().GetDefaultDepthStencilState(),
-        ShadowMapPS,  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
-        nullptr,
-        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
-    };
-    
-    Pipeline->UpdatePipeline(PipelineInfo);
     Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
     Pipeline->SetConstantBuffer(6, EShaderType::VS, PSMConstantBuffer);  // Light 전용 버퍼 사용
 
@@ -894,9 +892,18 @@ void FUpdateLightBufferPass::SetShadowRenderTarget(EShadowFilterType FilterType,
 
     if (FilterType == EShadowFilterType::VSM)
     {
-
+        // Set Shadow Map DSV
+        ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
+        ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
+        // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
+        ID3D11ShaderResourceView* NullSRV = nullptr;
+        DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+        DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // 색상 정보는 ShadowRTV에, 깊이 정보는 ShadowDSV에 기록, GPU는 두개의 목적지를 모두 출력 대상으로 인식
+        const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };   // VSM Default
+        DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
+        DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
     }
-    else  // None OR PCF
+    else  // None OR PCF 
     {
         ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
         DeviceContext->OMSetRenderTargets(0, nullptr, ShadowDSV);

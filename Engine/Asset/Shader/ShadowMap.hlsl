@@ -169,6 +169,7 @@ VS_OUTPUT mainVS(VS_INPUT input)
 
 // Pixel Shader
 // 기본 Depth Shadow Map
+#if VSM_ENABLED
 float2 mainPS(VS_OUTPUT input) : SV_Target
 {
     float Depth = saturate(input.Depth);
@@ -177,3 +178,8 @@ float2 mainPS(VS_OUTPUT input) : SV_Target
 
     return float2(m1, m2);
 }
+#else
+void mainPS(VS_OUTPUT input)
+{
+}
+#endif
