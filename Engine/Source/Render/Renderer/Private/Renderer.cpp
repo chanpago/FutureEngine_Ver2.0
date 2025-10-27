@@ -818,6 +818,7 @@ void URenderer::RenderLevel(FViewport* InViewport)
 				if (Primitive && Primitive->IsVisible())
 				{
 					FinalVisiblePrims.push_back(Primitive);
+					
 				}
 			}
 		}

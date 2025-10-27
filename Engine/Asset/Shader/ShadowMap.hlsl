@@ -110,62 +110,49 @@ float ComputeWorldTexelLength(float4 worldPos, float w_cam)
 //======================================================================
 VS_OUTPUT mainVS(VS_INPUT input)
 {
-    VS_OUTPUT o;
+    VS_OUTPUT output;
     float4 worldPos = mul(float4(input.Position, 1.0f), World);
     
     if (bUsePSM == 1)
     {
-        // --- 월드공간 바이어스 ---
-        float  a = ShadowParams.x;                    // ShadowBias
-        float  b = ShadowParams.y;                    // ShadowSlopeBias
-        float4 camClip_pre = mul(mul(worldPos, EyeView), EyeProj);
-        float  w_cam       = max(1e-6, camClip_pre.w);
-
-        float biasDist = 0.0f;
-        // 월드 텍셀 길이 근사
-        if (bUsePSM == 0)
-        {
-            // LVP (Light View Projection)
-            float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
-            // ★ LVP에도 L_texel 상한선 설정 (먼 거리에서 bias 폭발 방지)
-            L_texel = min(L_texel, 2.0);  // 최대 2 unit으로 제한
-            biasDist = a + b * L_texel;
-        }
-        else if (bUsePSM == 1)
-        {
-            // PSM (Perspective Shadow Maps)
-            float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
-            // ★ L_texel에 상한선 설정
-            L_texel = min(L_texel, 1.0);  // 최대 1 unit으로 제한
-            biasDist = a + b * L_texel;
-        }
-
+        // --- 월드공간 바이어스(일단보류) ---
+        //float  a = ShadowParams.x;                    // ShadowBias
+        //float  b = ShadowParams.y;                    // ShadowSlopeBias
+        //float4 camClip_pre = mul(mul(worldPos, EyeView), EyeProj);
+        //float  w_cam       = max(1e-6, camClip_pre.w);
+        //float biasDist = 0.0f;
+        //float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
+        //// ★ L_texel에 상한선 설정
+        //L_texel = min(L_texel, 1.0);  // 최대 1 unit으로 제한
+        //biasDist = a + b * L_texel;
         // 표면→광원 방향으로 전진(PSM 권장)
-        float3 PbiasedWS = worldPos.xyz + LightDirWS * biasDist;
-        float4 worldBiased = float4(PbiasedWS, 1.0);
+        //float3 PbiasedWS = worldPos.xyz + LightDirWS * biasDist;
+        //float4 worldBiased = float4(PbiasedWS, 1.0);
 
         // --- PSM 변환: World → Camera NDC → World (CameraWarp) → Light view/proj ---
         // Step 1: World → Camera Clip Space
-        float4 eyeClip = mul(mul(worldBiased, EyeView), EyeProj);
+        // 이 나눗셈이 "비선형성"을 묻히는 과정입니다.
+        float4 eyeClip = mul(mul(worldPos, EyeView), EyeProj);
 
         // Step 2: Camera Clip → NDC (perspective divide - warping happens here!)
         float3 camNDC = eyeClip.xyz / max(1e-6, eyeClip.w);
 
         // Step 3: NDC → World (CameraWarp = inverse camera projection)
+        // 안전상 정규화 해놓음 (worldFromNDC / max(1e-6, worldFromNDC.w);)
+        // "워프 공간"에 담갔다가 뺀 결과물(왜곡된 월드 좌표)이 worldFromNDC 입니다.
         float4 worldFromNDC = mul(float4(camNDC, 1.0), EyeViewProjInv);
         worldFromNDC = worldFromNDC / max(1e-6, worldFromNDC.w);
 
         // Step 4: World → Light View/Proj
-        o.Position = mul(mul(float4(worldFromNDC.xyz, 1.0), LightViewP), LightProjP);
+        output.Position = mul(mul(float4(worldFromNDC.xyz, 1.0), LightViewP), LightProjP);
     }
     else
     {
         // Simple Ortho: World→Light 직접 변환
-        o.Position = mul(mul(worldPos, LightViewP), LightProjP);
-        
+        output.Position = mul(mul(worldPos, LightViewP), LightProjP);
     }
-    o.Depth = o.Position.z / o.Position.w;
-    return o;
+    output.Depth = output.Position.z / output.Position.w;
+    return output;
 }
 
 // Pixel Shader

@@ -26,4 +26,5 @@ struct FRenderingContext
     TArray<class UDirectionalLightComponent*> DirectionalLights;
     TArray<class UAmbientLightComponent*> AmbientLights;
     TArray<class UHeightFogComponent*> Fogs;
+    TArray<class UStaticMeshComponent*> AllStaticMeshes;
 };

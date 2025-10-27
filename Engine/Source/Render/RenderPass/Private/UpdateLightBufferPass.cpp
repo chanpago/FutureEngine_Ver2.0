@@ -56,15 +56,12 @@ FUpdateLightBufferPass::~FUpdateLightBufferPass()
 
 void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
 {
-    // Context에 이미 수집된 Light 컴포넌트들을 사용
-    // Shadow Map 베이킹 실행
     BakeShadowMap(Context);
 }
 
 
 void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 {
-    
     const auto& Renderer = URenderer::GetInstance();
     auto DeviceContext = Renderer.GetDeviceContext();
 
@@ -87,6 +84,18 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     ID3D11DepthStencilView* OriginalDSV = nullptr;
     DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
 
+    // Shadow Map DSV 설정 및 클리어
+    ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
+    ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
+
+    // Null 체크: Shadow Map 리소스가 생성되지 않았으면 early return
+    if (!ShadowDSV || !ShadowRTV)
+    {
+        UE_LOG_ERROR("Shadow Map resources not initialized! DSV=%p, RTV=%p", ShadowDSV, ShadowRTV);
+        return;
+    }
+
+    
     // Directional Light Shadow Map 렌더링
     for (auto Light : Context.DirectionalLights)
     {
@@ -109,18 +118,6 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
             SceneMax.X = std::max(SceneMax.X, aabbMax.X);
             SceneMax.Y = std::max(SceneMax.Y, aabbMax.Y);
             SceneMax.Z = std::max(SceneMax.Z, aabbMax.Z);
-        }
-        //UE_LOG_INFO("[LVP] World AABB Min(%.2f, %.2f, %.2f) Max(%.2f, %.2f, %.2f)", SceneMin.X, SceneMin.Y, SceneMin.Z, SceneMax.X, SceneMax.Y, SceneMax.Z);
-        
-        // Shadow Map DSV 설정 및 클리어
-        ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
-        ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
-
-        // Null 체크: Shadow Map 리소스가 생성되지 않았으면 early return
-        if (!ShadowDSV || !ShadowRTV)
-        {
-            UE_LOG_ERROR("Shadow Map resources not initialized! DSV=%p, RTV=%p", ShadowDSV, ShadowRTV);
-            return;
         }
 
         // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
@@ -148,7 +145,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 
         // === Simple Ortho Shadow ===
         FVector LightPosition = (SceneMin + SceneMax) / 2.0f;
-        LightPosition.Z += 200.0f;
+        LightPosition.Z = SceneMax.Z;
             
         // Directional Light의 fwd만으로 정규 직교 기저 구성
         FVector LightFwd = Light->GetForwardVector();
@@ -217,228 +214,21 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 
         FMatrix LightProj = OrthoRowLH(oMinX, oMaxX, oMinY, oMaxY, oMinZ, oMaxZ);
 
-
-        // === 헬퍼 ===
-        auto NormalizeSafe = [](const FVector& v, float eps = 1e-6f){
-            float len = v.Length();
-            return (len > eps) ? (v / len) : FVector(0,0,0);
-        };
-
-        // row-vector LookAt (LH)
-        auto BuildLookAtRowLH = [](const FVector& Eye, const FVector& At, const FVector& UpHint)
+        // warp용 헬퍼 변수
+        FMatrix EyeViewProj =  CameraView * CameraProj;
+        FMatrix EyeViewProjInv = CameraProj.Inverse() * CameraView.Inverse();
+        
+        auto WarpWorldPoint = [&](const FVector4& world) -> FVector4
         {
-            // === 헬퍼 ===
-            auto NormalizeSafe = [](const FVector& v, float eps = 1e-6f){
-                float len = v.Length();
-                return (len > eps) ? (v / len) : FVector(0,0,0);
-            };
-            
-            FVector Fwd = NormalizeSafe(At - Eye);
-            FVector Up  = UpHint;
-            if (fabsf(Fwd.Dot(Up)) > 0.99f) Up = (fabsf(Fwd.Z) > 0.9f) ? FVector(1,0,0) : FVector(0,0,1);
-        
-            FVector Right = NormalizeSafe(Up.Cross(Fwd));
-            Up = Fwd.Cross(Right);
-        
-            FMatrix M = FMatrix::Identity();
-            // 회전부(행벡터 기준)
-            M.Data[0][0]=Right.X; M.Data[0][1]=Up.X; M.Data[0][2]=Fwd.X;
-            M.Data[1][0]=Right.Y; M.Data[1][1]=Up.Y; M.Data[1][2]=Fwd.Y;
-            M.Data[2][0]=Right.Z; M.Data[2][1]=Up.Z; M.Data[2][2]=Fwd.Z;
-            // 평행이동(행벡터)
-            M.Data[3][0]= -Eye.Dot(Right);
-            M.Data[3][1]= -Eye.Dot(Up);
-            M.Data[3][2]= -Eye.Dot(Fwd);
-            M.Data[3][3]=  1.0f;
-            return M;
-        };
-        
-        
-        
-        // (1) 현재 프레임 수신자들의 NDC 박스 구하기
-        auto ComputeReceiverNDCBox = [&](FVector& ndcMin, FVector& ndcMax)
-        {
-            const float BIG = 1e30f;
-            ndcMin = FVector(+BIG,+BIG,+BIG);
-            ndcMax = FVector(-BIG,-BIG,-BIG);
+            FVector4 eyeClip = FMatrix::VectorMultiply(world, CameraView);
+            eyeClip = FMatrix::VectorMultiply(eyeClip, CameraProj);
 
-            auto Accum = [&](const FVector& wmin, const FVector& wmax)
-            {
-                FVector ws[8]={
-                    {wmin.X,wmin.Y,wmin.Z},{wmax.X,wmin.Y,wmin.Z},
-                    {wmin.X,wmax.Y,wmin.Z},{wmax.X,wmax.Y,wmin.Z},
-                    {wmin.X,wmin.Y,wmax.Z},{wmax.X,wmin.Y,wmax.Z},
-                    {wmin.X,wmax.Y,wmax.Z},{wmax.X,wmax.Y,wmax.Z}
-                };
-                for(int i=0;i<8;++i){
-                    FVector4 v = FMatrix::VectorMultiply(FVector4(ws[i],1.0f), CameraView);
-                    v = FMatrix::VectorMultiply(v, CameraProj);     // clip
-                    if (v.W <= 0.0f) continue;                      // 카메라 뒤는 제외(필요시 보강)
-                    FVector ndc(v.X/v.W, v.Y/v.W, v.Z/v.W);         // D3D: z∈[0,1]
-                    // 살짝 가드밴드
-                    if (ndc.X < -1.2f || ndc.X > 1.2f) continue;
-                    if (ndc.Y < -1.2f || ndc.Y > 1.2f) continue;
-                    if (ndc.Z <  0.0f || ndc.Z > 1.2f) continue;
-                    ndcMin.X = std::min(ndcMin.X, ndc.X);
-                    ndcMin.Y = std::min(ndcMin.Y, ndc.Y);
-                    ndcMin.Z = std::min(ndcMin.Z, ndc.Z);
-                    ndcMax.X = std::max(ndcMax.X, ndc.X);
-                    ndcMax.Y = std::max(ndcMax.Y, ndc.Y);
-                    ndcMax.Z = std::max(ndcMax.Z, ndc.Z);
-                    UE_LOG("ndcMin.X : %f  ndcMax.X : %f   ndcMin.Y : %f  ndcMax.Y : %f    ndcMin.Z : %f  ndcMax.Z : %f",
-                        ndcMin.X,ndcMax.X,ndcMin.Y,ndcMax.Y,ndcMin.Z,ndcMax.Z);
-                }
-            };
+            float w = max(1e-5f, eyeClip.W);
+            FVector camNDC = FVector(eyeClip.X / w, eyeClip.Y / w, eyeClip.Z / w);
 
-            for (auto MeshComp : Context.StaticMeshes)
-            {
-                if (!MeshComp || !MeshComp->IsVisible()) continue;
-                FVector a,b; MeshComp->GetWorldAABB(a,b);
-                Accum(a,b);
-            }
-
-            if (ndcMin.X >  1e29f) { // 유효샘플 없을 때
-                ndcMin = FVector(-1,-1,0);
-                ndcMax = FVector( 1, 1,1);
-            }
-
-            const float mxy=0.02f, mz=0.001f;
-            ndcMin.X = std::max(-1.0f, ndcMin.X - mxy);
-            ndcMin.Y = std::max(-1.0f, ndcMin.Y - mxy);
-            ndcMax.X = std::min( 1.0f, ndcMax.X + mxy);
-            ndcMax.Y = std::min( 1.0f, ndcMax.Y + mxy);
-            ndcMin.Z = std::max( 0.0f, ndcMin.Z - mz);
-            ndcMax.Z = std::min( 1.0f, ndcMax.Z + mz);
-
-            // ★ NDC Box Quantization으로 카메라 미세 움직임 무시
-            // NDC 좌표를 0.1 단위로 snap하여 temporal stability 향상
-            const float quantStep = 0.1f;  // 조정 가능: 0.05 ~ 0.2
-            auto Quantize = [](float value, float step) {
-                return floor(value / step) * step;
-            };
-
-            ndcMin.X = Quantize(ndcMin.X, quantStep);
-            ndcMin.Y = Quantize(ndcMin.Y, quantStep);
-            ndcMin.Z = Quantize(ndcMin.Z, quantStep * 0.1f);  // Z는 더 정밀하게
-
-            // Max는 ceiling (올림)
-            ndcMax.X = Quantize(ndcMax.X + quantStep, quantStep);
-            ndcMax.Y = Quantize(ndcMax.Y + quantStep, quantStep);
-            ndcMax.Z = Quantize(ndcMax.Z + quantStep * 0.1f, quantStep * 0.1f);
-
-            // 범위 체크
-            ndcMin.X = std::max(-1.0f, ndcMin.X);
-            ndcMin.Y = std::max(-1.0f, ndcMin.Y);
-            ndcMax.X = std::min( 1.0f, ndcMax.X);
-            ndcMax.Y = std::min( 1.0f, ndcMax.Y);
-        };
-        
-        // (2) NDC 박스를 광원 방향으로 본 라이트 V_L′, P_L′ 생성
-        // n, f 값도 반환하도록 수정 (texel snapping에서 사용)
-        auto FitLightToNDCBox = [&](const FVector& LightDirWorld,
-                                    const FVector& ndcMin, const FVector& ndcMax,
-                                    FMatrix& OutV, FMatrix& OutP, FVector4& OutLTRB,
-                                    float& OutNear, float& OutFar)
-        {
-            // PSM: NDC 박스를 World Space로 변환하기 위한 역행렬 계산
-            FMatrix CameraProjInv = CameraProj.Inverse();
-            FMatrix CameraViewInv = CameraView.Inverse();
-
-            // NDC 박스 8코너를 World Space로 변환
-            FVector worldCorners[8];
-            FVector ndcCorners[8]={
-                {ndcMin.X,ndcMin.Y,ndcMin.Z},{ndcMax.X,ndcMin.Y,ndcMin.Z},
-                {ndcMin.X,ndcMax.Y,ndcMin.Z},{ndcMax.X,ndcMax.Y,ndcMin.Z},
-                {ndcMin.X,ndcMin.Y,ndcMax.Z},{ndcMax.X,ndcMin.Y,ndcMax.Z},
-                {ndcMin.X,ndcMax.Y,ndcMax.Z},{ndcMax.X,ndcMax.Y,ndcMax.Z}
-            };
-
-            for(int i=0;i<8;++i){
-                // NDC → Camera Clip Space (homogeneous coordinates)
-                FVector4 clipSpace = FVector4(ndcCorners[i], 1.0f);
-
-                // Camera Clip → Camera View Space (역 Projection)
-                FVector4 viewSpace = FMatrix::VectorMultiply(clipSpace, CameraProjInv);
-                viewSpace = viewSpace / viewSpace.W;  // Perspective divide
-
-                // Camera View → World Space (역 View)
-                FVector4 worldSpace = FMatrix::VectorMultiply(FVector4(viewSpace.X, viewSpace.Y, viewSpace.Z, 1.0f), CameraViewInv);
-                worldCorners[i] = FVector(worldSpace.X, worldSpace.Y, worldSpace.Z);
-            }
-
-            // World Space에서 박스 중심 계산
-            FVector worldCenter(0,0,0);
-            for(int i=0;i<8;++i){
-                worldCenter = worldCenter + worldCorners[i];
-            }
-            worldCenter = worldCenter / 8.0f;
-
-            // World Space에서 박스 대각선 길이 계산
-            float diag = 0.0f;
-            for(int i=0;i<8;++i){
-                float dist = (worldCorners[i] - worldCenter).Length();
-                diag = std::max(diag, dist);
-            }
-            diag *= 2.0f; // 대각선 전체 길이
-
-            // Light View Matrix 생성 (World Space 기준)
-            float eyeDist = std::max(0.25f, diag);
-            FVector Eye = worldCenter - LightDirWorld * eyeDist;
-            FVector At = worldCenter;
-            FMatrix Vlp = BuildLookAtRowLH(Eye, At, FVector(0,0,1));
-
-            // World Space 코너들을 Light View로 변환 후 직교 경계 산출
-            float l=+FLT_MAX, b=+FLT_MAX, n=+FLT_MAX;
-            float r=-FLT_MAX, t=-FLT_MAX, f=-FLT_MAX;
-
-            for(int i=0;i<8;++i){
-                FVector4 v = FMatrix::VectorMultiply(FVector4(worldCorners[i], 1.0f), Vlp);
-                l = std::min(l, v.X); r = std::max(r, v.X);
-                b = std::min(b, v.Y); t = std::max(t, v.Y);
-                n = std::min(n, v.Z); f = std::max(f, v.Z);
-            }
-
-
-            // pad 포함 전 경계
-            OutLTRB = FVector4(l, r, b, t);
-
-            // 소량 패딩
-            const float pad = 0.001f;
-            OutV = Vlp;
-            OutNear = n - pad;
-            OutFar = f + pad;
-            //OutP = OrthoRowLH(l, r, b, t, std::max(0.0f, n - pad), f + pad);
-            OutP = OrthoRowLH(l, r, b, t, OutNear, OutFar);
-            OutLTRB = FVector4(l, r, b, t);
-        };
-
-        // (3) World-Space Texel Snapping으로 Temporal Stability 개선
-        // Light view space의 frustum 중심을 texel grid에 정렬
-        auto ApplyTexelSnappingToLightView = [&](float& InOutL, float& InOutR,
-                                                  float& InOutB, float& InOutT,
-                                                  float shadowMapWidth, float shadowMapHeight)
-        {
-            // 1. World units per texel 계산 (light view space 기준)
-            float worldUnitsPerTexelX = (InOutR - InOutL) / shadowMapWidth;
-            float worldUnitsPerTexelY = (InOutT - InOutB) / shadowMapHeight;
-
-            // 2. Light view space frustum의 중심 계산
-            float centerX = (InOutL + InOutR) * 0.5f;
-            float centerY = (InOutB + InOutT) * 0.5f;
-
-            // 3. 중심을 texel grid에 snap
-            float snappedCenterX = floor(centerX / worldUnitsPerTexelX) * worldUnitsPerTexelX;
-            float snappedCenterY = floor(centerY / worldUnitsPerTexelY) * worldUnitsPerTexelY;
-
-            // 4. Offset 계산
-            float offsetX = snappedCenterX - centerX;
-            float offsetY = snappedCenterY - centerY;
-
-            // 5. Frustum 경계를 offset만큼 이동
-            InOutL += offsetX;
-            InOutR += offsetX;
-            InOutB += offsetY;
-            InOutT += offsetY;
+            FVector4 warped = FMatrix::VectorMultiply(FVector4(camNDC, 1.0f), EyeViewProjInv);
+            warped /= max(1e-5f, warped.W);
+            return warped;
         };
         
         // bCastShadows에 따라 분기
@@ -457,7 +247,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
             LVPShadowMap.LightProjP= LightProj;
             LVPShadowMap.LightViewPInv   = LightView.Inverse(); // L_texel 계산에 안 쓰지만 채워두면 안전
 
-            LVPShadowMap.ShadowParams = FVector4(0.002f, 0, 0, 0);
+            LVPShadowMap.ShadowParams = FVector4(0.00f, 0, 0, 0);
 
             LVPShadowMap.LightDirWS      = (-Light->GetForwardVector()).GetNormalized();
             LVPShadowMap.bInvertedLight = 0;
@@ -478,81 +268,97 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         }
         else
         {
-            //UE_LOG("PSM");
-            // 시작값
-            FVector ndcMin, ndcMax;
-            ComputeReceiverNDCBox(ndcMin, ndcMax);
+            float psmMinX=+FLT_MAX, psmMinY=+FLT_MAX;
+            float psmMaxX=-FLT_MAX, psmMaxY=-FLT_MAX;
+            float frustumMinZ = +FLT_MAX, frustumMaxZ = -FLT_MAX;
 
-            FMatrix V_L_prime, P_L_prime;
-            FVector4 orthoLTRB;
-            float nearPlane, farPlane;
-            FitLightToNDCBox(Light->GetForwardVector(), ndcMin, ndcMax, V_L_prime, P_L_prime, orthoLTRB, nearPlane, farPlane);
+            // --- 1. Calculate warped AABB of the camera frustum for a stable Z range ---
+            static const FVector NdcCorners[8] = {
+                {-1,-1,0},{ 1,-1,0},{-1, 1,0},{ 1, 1,0},
+                {-1,-1,1},{ 1,-1,1},{-1, 1,1},{ 1, 1,1}
+            };
 
-            // ★ Texel Snapping 적용 (Temporal Stability 개선)
-            // Light view space frustum을 texel grid에 정렬
-            float l = orthoLTRB.X;
-            float r = orthoLTRB.Y;
-            float b = orthoLTRB.Z;
-            float t = orthoLTRB.W;
+            for (int i=0; i<8; ++i)
+            {
+                FVector4 worldCorner = FMatrix::VectorMultiply(FVector4(NdcCorners[i], 1.0f), EyeViewProjInv);
+                worldCorner /= std::max(1e-6f, worldCorner.W);
 
-            ApplyTexelSnappingToLightView(l, r, b, t,
-                                         DirectionalShadowViewport.Width, DirectionalShadowViewport.Height);
+                FVector4 warpedPoint = WarpWorldPoint(worldCorner);
+                FVector4 lightPos = FMatrix::VectorMultiply(warpedPoint, LightView);
 
-            // Snapped l/r/b/t로 Ortho projection 재생성
-            // near/far는 FitLightToNDCBox에서 계산된 값 사용
-            P_L_prime = OrthoRowLH(l, r, b, t, nearPlane, farPlane);
-            orthoLTRB = FVector4(l, r, b, t);
+                psmMinX = std::min(psmMinX, lightPos.X); psmMaxX = std::max(psmMaxX, lightPos.X);
+                psmMinY = std::min(psmMinY, lightPos.Y); psmMaxY = std::max(psmMaxY, lightPos.Y);
+                frustumMinZ = std::min(frustumMinZ, lightPos.Z); frustumMaxZ = std::max(frustumMaxZ, lightPos.Z);
+            }
 
-            // 행벡터 합성/역행렬: (V_e P_e)^(-1) = P_e^{-1} * V_e^{-1}
-            FMatrix EyeViewInv      = CameraView.Inverse();
-            FMatrix EyeProjInv      = CameraProj.Inverse();
-            FMatrix EyeViewProjInv  = EyeProjInv * EyeViewInv;
+            // --- 2. Include visible casters to tighten the X/Y bounds ---
+            for (auto MeshComp : Context.StaticMeshes)
+            {
+                if (!MeshComp || !MeshComp->IsVisible()) { continue; }
 
-            // 라이트 뷰 역행렬 (Texel snapping 이후 재계산)
-            FMatrix LightViewPInv   = V_L_prime.Inverse();
+                FVector meshMin, meshMax;
+                MeshComp->GetWorldAABB(meshMin, meshMax);
 
-            // 섀도맵 해상도 (뷰포트 또는 텍스처 크기에서 가져와도 됨)
-            float sx = DirectionalShadowViewport.Width;
-            float sy = DirectionalShadowViewport.Height;
+                FVector meshCorners[8] = {
+                    {meshMin.X, meshMin.Y, meshMin.Z}, {meshMax.X, meshMin.Y, meshMin.Z},
+                    {meshMin.X, meshMax.Y, meshMin.Z}, {meshMax.X, meshMax.Y, meshMin.Z},
+                    {meshMin.X, meshMin.Y, meshMax.Z}, {meshMax.X, meshMin.Y, meshMax.Z},
+                    {meshMin.X, meshMax.Y, meshMax.Z}, {meshMax.X, meshMax.Y, meshMax.Z}
+                };
 
-            // 바이어스 + 라이트 방향(표면→광원)
-            //float A = Light->GetShadowBias();
-            //float b = Light->GetShadowSlopeBias();
-            FVector LdirWS = -Light->GetForwardVector(); // 라이트 광선 방향이 +Fwd라면, 표면→광원은 -Fwd
-            LdirWS = LdirWS.GetNormalized();
+                bool isInFrustum = false;
+                for (int iCorner=0; iCorner<8; ++iCorner)
+                {
+                    FVector4 clipPos = FMatrix::VectorMultiply(FVector4(meshCorners[iCorner], 1.0f), EyeViewProj);
+                    if (clipPos.X >= -clipPos.W && clipPos.X <= clipPos.W &&
+                        clipPos.Y >= -clipPos.W && clipPos.Y <= clipPos.W &&
+                        clipPos.Z >= 0.0f && clipPos.Z <= clipPos.W)
+                    {
+                        isInFrustum = true;
+                        break;
+                    }
+                }
+
+                if (!isInFrustum) { continue; }
+
+                for (int iCorner=0; iCorner<8; ++iCorner)
+                {
+                    FVector4 warpedPoint = WarpWorldPoint(FVector4(meshCorners[iCorner], 1.0f));
+                    FVector4 lightPos = FMatrix::VectorMultiply(warpedPoint, LightView);
+                    psmMinX = std::min(psmMinX, lightPos.X); psmMaxX = std::max(psmMaxX, lightPos.X);
+                    psmMinY = std::min(psmMinY, lightPos.Y); psmMaxY = std::max(psmMaxY, lightPos.Y);
+                    // ★ Z 범위도 업데이트! (메쉬가 frustum보다 앞/뒤에 있을 수 있음)
+                    frustumMinZ = std::min(frustumMinZ, lightPos.Z);
+                    frustumMaxZ = std::max(frustumMaxZ, lightPos.Z);
+                }
+            }
+
+            // --- 3. Create the final robust projection matrix ---
+            FMatrix LightProjPSM = OrthoRowLH(psmMinX, psmMaxX, psmMinY, psmMaxY, frustumMinZ, frustumMaxZ);
 
             // === PSM (Perspective Shadow Maps) ===
             FShadowMapConstants PSM;
             PSM.EyeView   = CameraView;
             PSM.EyeProj   = CameraProj;
             PSM.EyeViewProjInv  = EyeViewProjInv;
-
-            PSM.LightViewP = V_L_prime;
-            PSM.LightProjP = P_L_prime;
-            PSM.LightViewPInv   = LightViewPInv;
-
-            
+            PSM.LightViewP = LightView;
+            PSM.LightProjP = LightProjPSM;
+            PSM.LightViewPInv   = LightView.Inverse();
             PSM.ShadowParams = FVector4(Light->GetShadowBias(), Light->GetShadowSlopeBias(), 0, 0);
-
-            PSM.LightDirWS      = LdirWS;
+            PSM.LightDirWS      = (-Light->GetForwardVector()).GetNormalized();
             PSM.bInvertedLight = 0;
-
-            PSM.LightOrthoParams= orthoLTRB;             // (l, r, b, t)
-            PSM.ShadowMapSize   = FVector2(sx, sy);
-            
+            PSM.LightOrthoParams= FVector4(psmMinX, psmMaxX, psmMinY, psmMaxY);
+            PSM.ShadowMapSize   = FVector2(DirectionalShadowViewport.Width, DirectionalShadowViewport.Height);
             PSM.bUsePSM = 1;
             FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, PSM);
-            
-            LightViewP = V_L_prime;
-            LightProjP = P_L_prime;
+
+            LightViewP = LightView;
+            LightProjP = LightProjPSM;
             CachedEyeView = CameraView;
             CachedEyeProj = CameraProj;
 
-            LightOrthoLTRB = orthoLTRB;
+            LightOrthoLTRB = FVector4(psmMinX, psmMaxX, psmMinY, psmMaxY);
         }
-
-
-
         // 파이프라인: b0=Model, b6=PSM, PS 필수(depth write를 위해)
         FPipelineInfo Pipe = {
             ShadowMapInputLayout,
@@ -581,6 +387,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         // 현재는 하나의 Directional Light만 처리 (나중에 여러 개 지원 가능)
         break;
     }
+    
     // Shadow Map DSV를 unbind (다음 pass에서 SRV로 사용하기 위해)
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     

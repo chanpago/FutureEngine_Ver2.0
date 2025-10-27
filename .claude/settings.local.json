@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(msbuild:*)"
+      "Bash(msbuild:*)",
+      "Read(//c/Users/Jungle/Desktop/errorpng/**)"
     ],
     "deny": [],
     "ask": []
