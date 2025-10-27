@@ -125,6 +125,22 @@ cbuffer ShadowMapConstants : register(b6)
     float2 pad;
 };
 
+// Single-spot shadow constants (for one caster)
+cbuffer SpotShadowConstants : register(b7)
+{
+    row_major float4x4 SpotLightView;
+    row_major float4x4 SpotLightProj;
+    float3 SpotPositionWS;
+    float SpotRange;
+    float3 SpotDirectionWS;
+    float SpotOuterCone;
+    float SpotInnerCone;
+    float2 SpotShadowMapSize;
+    float SpotShadowBias;
+    uint SpotUseVSM;
+    uint SpotUsePCF;
+    float SpotPadding;
+};
 
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
@@ -132,7 +148,7 @@ StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
 Texture2DArray CascadedShadowMapTexture : register(t11);
-
+Texture2D SpotShadowMapTexture : register(t12);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -302,7 +318,7 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
     // 최종 그림자 값 (1.0 = 빛, 0.0 = 그림자)
     float Shadow = 1.0f;
     
-    if (bUseCSM > 0.5f)  // CSM + VSM(?)
+    if (bUseCSM != 0)  // CSM + VSM(?)
     {
         int CascadeIndex = 0;
         if (ViewDepth > CascadeSplits.x)
@@ -350,7 +366,7 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
         // 현재 픽셀의 Light 공간 Depth
         float CurrentDepth = LightSpacePos.z;
         
-        if (bUseVSM < 0.5f)
+        if (bUseVSM == 0)
         {
             // Classic depth compare
             float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
@@ -448,7 +464,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
     
-    if (bUseCSM > 0.5f)
+    if (bUseCSM != 0)
     {
         int CascadeIndex = 0;
         if (ViewDepth > CascadeSplits.x)    CascadeIndex = 1;
@@ -473,14 +489,14 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
         return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
     }
-    else if ((bUseVSM < 0.5f && bUsePCF < 0.5f) || (bUseVSM > 0.5f && bUsePCF > 0.5f))
+    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
         float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
         float Shadow = (CurrentDepth - ShadowParams[0]) > ShadowMapDepth ? 0.0f : 1.0f;
         return Shadow;
     }
-    else if (bUsePCF > 0.5f)
+    else if (bUsePCF != 0)
     {
         // 3x3 PCF (Percentage-Closer Filtering)
         float Shadow = 0.0f;
@@ -507,7 +523,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         Shadow /= 9.0f;
         return Shadow;
     }
-    else if(bUseVSM > 0.5f)
+    else if(bUseVSM != 0)
     {
         // VSM: configurable smoothing via mip bias
         static const float VSM_MipBias = 1.25f; // Increase for softer shadows
@@ -538,6 +554,30 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
 inline float CalculateShadowFactor(float3 WorldPosition)
 {
     return PSM_Visibility(WorldPosition);
+}
+
+// Compute spotlight shadow factor from single-spot constants (b7/t12)
+float CalculateSpotShadowFactor(float3 worldPos)
+{
+    // If constants not initialized or SRV not bound, skip sampling
+    if (SpotShadowMapSize.x <= 0.0f || SpotRange <= 0.0f)
+        return 1.0f;
+
+    // Transform world position to spot light clip space
+    float4 ls = mul(float4(worldPos, 1.0f), SpotLightView);
+    ls = mul(ls, SpotLightProj);
+    ls.xyz /= ls.w;
+
+    float2 uv = ls.xy * 0.5f + 0.5f;
+    uv.y = 1.0f - uv.y;
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f)
+        return 1.0f;
+
+    float currentDepth = ls.z;
+    
+    // Use explicit LOD to avoid gradient use in dynamic loops
+    float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uv, 0).r;
+    return (currentDepth - SpotShadowBias) > sd ? 0.0f : 1.0f;
 }
 
 // Safe Normalize Util Functions
@@ -870,10 +910,15 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
     // 4. Spot Lights
     uint SpotLightCount = GetSpotLightCount(LightIndicesOffset);
-     for (uint j = 0; j < SpotLightCount ; j++)
+    for (uint j = 0; j < SpotLightCount ; j++)
     {
         FSpotLightInfo SpotLight = GetSpotLight(LightIndicesOffset + j);
-        ADD_ILLUM(Illumination, CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation));
+        FIllumination S = CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation);
+        
+        float sf = CalculateSpotShadowFactor(Input.WorldPosition);
+        S.Diffuse *= sf;
+        S.Specular *= sf;
+        ADD_ILLUM(Illumination, S);
     }
     
     finalPixel.rgb = Illumination.Ambient.rgb * ambientColor.rgb + Illumination.Diffuse.rgb * diffuseColor.rgb + Illumination.Specular.rgb * specularColor.rgb;

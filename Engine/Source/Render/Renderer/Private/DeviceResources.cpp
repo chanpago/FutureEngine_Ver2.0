@@ -24,6 +24,7 @@ void UDeviceResources::Create(HWND InWindowHandle)
 	CreateDepthBuffer();
 	CreateSceneColorTarget();
 	CreateShadowMapResources();  // TODO: 임시 비활성화
+	CreateSpotShadowMapResources();
 	CreateCascadedShadowMap();
 	CreateFactories();
 }
@@ -33,6 +34,7 @@ void UDeviceResources::Release()
 	ReleaseFactories();
 	ReleaseCascadedShadowMap();
 	ReleaseShadowMapResources();
+	ReleaseSpotShadowMapResources();
 	ReleaseSceneColorTarget();
 	ReleaseFrameBuffer();
 	ReleaseNormalBuffer();
@@ -569,6 +571,71 @@ void UDeviceResources::CreateShadowMapResources()
 		ReleaseShadowMapResources();
 		return;
 	}
+}
+
+/**
+ * @brief Spot Light Shadow Map 리소스 생성 (1024x1024)
+ */
+void UDeviceResources::CreateSpotShadowMapResources()
+{
+    if (!Device)
+    {
+        UE_LOG_ERROR("CreateSpotShadowMapResources: Device is null!");
+        return;
+    }
+
+    const UINT ShadowMapSize = 1024;
+
+    // Depth Texture for Spot Shadow
+    D3D11_TEXTURE2D_DESC DepthDesc = {};
+    DepthDesc.Width = ShadowMapSize;
+    DepthDesc.Height = ShadowMapSize;
+    DepthDesc.MipLevels = 1;
+    DepthDesc.ArraySize = 1;
+    DepthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+    DepthDesc.SampleDesc.Count = 1;
+    DepthDesc.SampleDesc.Quality = 0;
+    DepthDesc.Usage = D3D11_USAGE_DEFAULT;
+    DepthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+
+    HRESULT hr = Device->CreateTexture2D(&DepthDesc, nullptr, &SpotShadowMapTexture);
+    if (FAILED(hr))
+    {
+        UE_LOG_ERROR("Failed to create Spot Shadow Map Texture");
+        return;
+    }
+
+    D3D11_DEPTH_STENCIL_VIEW_DESC DSVDesc = {};
+    DSVDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    DSVDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    DSVDesc.Texture2D.MipSlice = 0;
+    hr = Device->CreateDepthStencilView(SpotShadowMapTexture, &DSVDesc, &SpotShadowMapDSV);
+    if (FAILED(hr))
+    {
+        UE_LOG_ERROR("Failed to create Spot Shadow Map DSV");
+        ReleaseSpotShadowMapResources();
+        return;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
+    SRVDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    SRVDesc.Texture2D.MostDetailedMip = 0;
+    SRVDesc.Texture2D.MipLevels = 1;
+    hr = Device->CreateShaderResourceView(SpotShadowMapTexture, &SRVDesc, &SpotShadowMapSRV);
+    if (FAILED(hr))
+    {
+        UE_LOG_ERROR("Failed to create Spot Shadow Map SRV");
+        ReleaseSpotShadowMapResources();
+        return;
+    }
+}
+
+void UDeviceResources::ReleaseSpotShadowMapResources()
+{
+    SafeRelease(SpotShadowMapSRV);
+    SafeRelease(SpotShadowMapDSV);
+    SafeRelease(SpotShadowMapTexture);
 }
 
 /**

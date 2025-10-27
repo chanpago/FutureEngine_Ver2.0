@@ -20,8 +20,11 @@ public:
 	virtual void Execute(FRenderingContext& Context) override;
 	virtual void Release() override;
 
-	FMatrix GetLightViewMatrix() const { return LightViewP; }
-	FMatrix GetLightProjectionMatrix() const { return LightProjP; }
+    FMatrix GetLightViewMatrix() const { return LightViewP; }
+    FMatrix GetLightProjectionMatrix() const { return LightProjP; }
+    // Spot light shadow matrices (for single caster)
+    FMatrix GetSpotLightViewMatrix() const { return SpotLightView; }
+    FMatrix GetSpotLightProjectionMatrix() const { return SpotLightProj; }
 	FMatrix GetCachedEyeView() const { return CachedEyeView; }
 	FMatrix GetCachedEyeProj() const { return CachedEyeProj; }
 
@@ -41,6 +44,8 @@ public:
 
 private:
 	void NewBakeShadowMap(FRenderingContext& Context);
+	void BakeSpotShadowMap(FRenderingContext& Context);
+	
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
 
@@ -61,8 +66,10 @@ private:
 	D3D11_VIEWPORT SpotShadowViewport;
 	D3D11_VIEWPORT PointShadowViewport;
 
-	FMatrix LightViewP;
-	FMatrix LightProjP;
+    FMatrix LightViewP;
+    FMatrix LightProjP;
+    FMatrix SpotLightView;
+    FMatrix SpotLightProj;
 	FMatrix CachedEyeView;  // PSM 베이킹 시 사용한 카메라 V_e
 	FMatrix CachedEyeProj;  // PSM 베이킹 시 사용한 카메라 P_e
 	
