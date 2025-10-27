@@ -622,7 +622,6 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
             }
 
 
-
             // 파이프라인: b0=Model, b6=PSM, PS 필수(depth write를 위해)
             FPipelineInfo Pipe = {
                 ShadowMapInputLayout,
@@ -636,11 +635,8 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
             Pipeline->UpdatePipeline(Pipe);
             Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
             Pipeline->SetConstantBuffer(6, EShaderType::VS, PSMConstantBuffer);
-        
-        
-        
-      
-        
+
+            
             // 모든 Static Mesh를 Light 관점에서 렌더링
             for (auto MeshComp : Context.StaticMeshes)
             {

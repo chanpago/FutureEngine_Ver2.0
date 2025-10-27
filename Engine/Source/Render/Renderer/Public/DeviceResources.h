@@ -25,6 +25,12 @@ public:
 	// Shadow Map Resources
 	void CreateShadowMapResources();
 	void ReleaseShadowMapResources();
+	
+	void CreateDirectionalShadowMapResources();
+	void ReleaseDirectionalShadowMapResources();
+
+	void CreateSpotShadowMapResources();
+	void ReleaseSpotShadowMapResources();
 
 	// CSM Resources
 	void CreateCascadedShadowMap();
@@ -52,6 +58,12 @@ public:
 	ID3D11RenderTargetView* GetDirectionalShadowMapColorRTV() const { return DirectionalShadowMapColorRTV; }
 	ID3D11ShaderResourceView* GetDirectionalShadowMapColorSRV() const {return DirectionalShadowMapColorSRV; }
 	ID3D11Texture2D* GetDirectionalShadowMapColorTexture() const {return DirectionalShadowMapColorTexture; }
+
+	ID3D11DepthStencilView* GetSpotShadowMapDSV() const { return SpotShadowMapDSV; }
+	ID3D11ShaderResourceView* GetSpotShadowMapSRV() const { return SpotShadowMapSRV; }
+	ID3D11RenderTargetView* GetSpotShadowMapColorRTV() const { return SpotShadowMapColorRTV; }
+	ID3D11ShaderResourceView* GetSpotShadowMapColorSRV() const {return SpotShadowMapColorSRV; }
+	ID3D11Texture2D* GetSpotShadowMapColorTexture() const {return SpotShadowMapColorTexture; }
 
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
@@ -104,6 +116,14 @@ private:
 	ID3D11RenderTargetView* DirectionalShadowMapColorRTV = nullptr;
 	ID3D11ShaderResourceView* DirectionalShadowMapColorSRV = nullptr;
 	ID3D11Texture2D* DirectionalShadowMapColorTexture = nullptr;
+
+	// Spotlight Shadow Map
+	ID3D11Texture2D* SpotShadowMapTexture = nullptr;
+	ID3D11DepthStencilView* SpotShadowMapDSV = nullptr;
+	ID3D11ShaderResourceView* SpotShadowMapSRV = nullptr;
+	ID3D11RenderTargetView* SpotShadowMapColorRTV = nullptr;
+	ID3D11ShaderResourceView* SpotShadowMapColorSRV = nullptr;
+	ID3D11Texture2D* SpotShadowMapColorTexture = nullptr;
 
 	// CSM Resources
 	ID3D11Texture2D* CascadedShadowMapTexture = nullptr;
