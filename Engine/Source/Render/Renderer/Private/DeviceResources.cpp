@@ -24,6 +24,7 @@ void UDeviceResources::Create(HWND InWindowHandle)
 	CreateDepthBuffer();
 	CreateSceneColorTarget();
 	CreateShadowMapResources();  // TODO: 임시 비활성화
+	CreatePointShadowMapResources();
 	CreateCascadedShadowMap();
 	CreateFactories();
 }
@@ -582,4 +583,110 @@ void UDeviceResources::ReleaseShadowMapResources()
     SafeRelease(DirectionalShadowMapSRV);
     SafeRelease(DirectionalShadowMapDSV);
     SafeRelease(DirectionalShadowMapTexture);
+
+	SafeRelease(PointShadowMapColorSRV);
+	for (auto RTV : PointShadowMapColorRTVs)
+	{
+		SafeRelease(RTV);
+	}
+	SafeRelease(PointShadowMapColorTexture);
+	SafeRelease(PointShadowMapDSV);
+	SafeRelease(PointShadowMapTexture);
+}
+
+void UDeviceResources::CreatePointShadowMapResources()
+{
+	// 큐브맵 각 면의 해상도
+	const UINT SHADOW_MAP_SIZE = 1024;
+	HRESULT hr;
+
+	// --- 1. "데이터" 리소스 생성 (RTV/SRV용 R32_FLOAT 큐브맵 배열) ---
+
+	// 1.1. TextureCubeArray 텍스처 리소스 생성
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = SHADOW_MAP_SIZE;
+	texDesc.Height = SHADOW_MAP_SIZE;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = 6 * NUM_POINT_LIGHT; // 6면 * 조명 개수
+	texDesc.Format = DXGI_FORMAT_R32_FLOAT;  // 선형 거리를 저장할 RTV 포맷
+	texDesc.SampleDesc.Count = 1;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+	texDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE; // 큐브맵 배열 플래그
+
+	hr = Device->CreateTexture2D(&texDesc, nullptr, &PointShadowMapColorTexture);
+	if (FAILED(hr)) 
+	{ 
+		UE_LOG_ERROR("Failed to create PointShadowMapColorTexture"); 
+		ReleaseShadowMapResources();
+		return;
+	}
+
+	// 1.2. 전체 배열을 읽기 위한 SRV (t12 슬롯용)
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = texDesc.Format;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
+	srvDesc.TextureCubeArray.MostDetailedMip = 0;
+	srvDesc.TextureCubeArray.MipLevels = 1;
+	srvDesc.TextureCubeArray.First2DArrayFace = 0;
+	srvDesc.TextureCubeArray.NumCubes = NUM_POINT_LIGHT;
+
+	hr = Device->CreateShaderResourceView(PointShadowMapColorTexture, &srvDesc, &PointShadowMapColorSRV);
+	if (FAILED(hr)) 
+	{
+		UE_LOG_ERROR("Failed to create PointShadowMapColorSRV");
+		ReleaseShadowMapResources();
+		return; 
+	}
+
+	// 1.3. 큐브맵의 각 면(Slice)에 쓰기 위한 RTV 배열 생성
+	for (int i = 0; i < NUM_POINT_LIGHT * 6; ++i)
+	{
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		rtvDesc.Format = texDesc.Format;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+		rtvDesc.Texture2DArray.MipSlice = 0;
+		rtvDesc.Texture2DArray.FirstArraySlice = i; // 각 면을 하나씩 지정
+		rtvDesc.Texture2DArray.ArraySize = 1;
+
+		hr = Device->CreateRenderTargetView(PointShadowMapColorTexture, &rtvDesc, &PointShadowMapColorRTVs[i]);
+		if (FAILED(hr)) 
+		{
+			UE_LOG_ERROR("Failed to create PointShadowMapColorRTVs slice %d", i); 
+			ReleaseShadowMapResources();
+			return;
+		}
+	}
+
+	// --- 2. "도우미" 리소스 생성 (Z-Test 전용 D32_FLOAT) ---
+	
+	// 2.1. Z-Test용 깊이 텍스처 (RTV와 동일한 해상도, 1개만 필요)
+	D3D11_TEXTURE2D_DESC depthDesc = {};
+	depthDesc.Width = SHADOW_MAP_SIZE;
+	depthDesc.Height = SHADOW_MAP_SIZE;
+	depthDesc.MipLevels = 1;
+	depthDesc.ArraySize = 1; // 섀도우 패스마다 재사용할 것이므로 1개면 충분
+	depthDesc.Format = DXGI_FORMAT_D32_FLOAT; // 표준 깊이 포맷
+	depthDesc.SampleDesc.Count = 1;
+	depthDesc.Usage = D3D11_USAGE_DEFAULT;
+	depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+	hr = Device->CreateTexture2D(&depthDesc, nullptr, &PointShadowMapTexture);
+	if (FAILED(hr))
+	{
+		UE_LOG_ERROR("Failed to create PointShadowMapTexture (DSV)");
+		ReleaseShadowMapResources();
+		return; 
+	}
+
+	// 2.2. DSV 생성
+	hr = Device->CreateDepthStencilView(PointShadowMapTexture, nullptr, &PointShadowMapDSV);
+	if (FAILED(hr)) 
+	{ 
+		UE_LOG_ERROR("Failed to create PointShadowMapDSV");
+		ReleaseShadowMapResources();
+		return; 
+	}
+
+	UE_LOG("Point Light Shadow Map Resources Created Successfully.");
 }

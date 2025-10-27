@@ -1,5 +1,5 @@
 #pragma once
-
+#define NUM_POINT_LIGHT 30
 class UDeviceResources
 {
 public:
@@ -25,7 +25,7 @@ public:
 	// Shadow Map Resources
 	void CreateShadowMapResources();
 	void ReleaseShadowMapResources();
-
+	void CreatePointShadowMapResources();
 	// CSM Resources
 	void CreateCascadedShadowMap();
 	void ReleaseCascadedShadowMap();
@@ -104,6 +104,18 @@ private:
 	ID3D11RenderTargetView* DirectionalShadowMapColorRTV = nullptr;
 	ID3D11ShaderResourceView* DirectionalShadowMapColorSRV = nullptr;
 	ID3D11Texture2D* DirectionalShadowMapColorTexture = nullptr;
+
+	// Point Light Shadow Map
+	// R32_FLOAT 포맷의 큐브맵 배열 텍스처
+	ID3D11Texture2D* PointShadowMapColorTexture = nullptr; // Texture2DArray for multiple point lights, each containing a cube map
+	// 텍스처 각 면에 쓰기 위한 RTV 배열
+	ID3D11RenderTargetView* PointShadowMapColorRTVs[NUM_POINT_LIGHT * 6] = {};
+	// 큐브맵 배열 텍스처 전체를 UberLit에서 읽기 위한 SRV
+	ID3D11ShaderResourceView* PointShadowMapColorSRV = nullptr; // SRV for the entire texture array
+
+	// Shadow Map을 만드는 동안 Z-test를 활성화하기 위한 임시 깊이 버퍼
+	ID3D11Texture2D* PointShadowMapTexture = nullptr; // D32_FLOAT 포맷의 1024x1024 텍스처
+	ID3D11DepthStencilView* PointShadowMapDSV = nullptr; // 위 텍스처에 쓰기 위한 DSV
 
 	// CSM Resources
 	ID3D11Texture2D* CascadedShadowMapTexture = nullptr;
