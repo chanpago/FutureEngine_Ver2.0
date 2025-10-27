@@ -564,20 +564,22 @@ float CalculateSpotShadowFactor(float3 worldPos)
         return 1.0f;
 
     // Transform world position to spot light clip space
-    float4 ls = mul(float4(worldPos, 1.0f), SpotLightView);
-    ls = mul(ls, SpotLightProj);
-    ls.xyz /= ls.w;
+    float4 clip = mul(float4(worldPos, 1.0f), SpotLightView);
+    clip = mul(clip, SpotLightProj);
+    if (clip.w <= 0.0f)
+        return 1.0f; // behind the light frustum
 
-    float2 uv = ls.xy * 0.5f + 0.5f;
-    uv.y = 1.0f - uv.y;
+    float invW = rcp(clip.w);
+    float2 uv = float2(clip.x * invW, clip.y * invW) * 0.5f + 0.5f;
+    uv.y = 0.5f - (clip.y * invW) * 0.5f; // DirectX UV: flip Y
     if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f)
         return 1.0f;
 
-    float currentDepth = ls.z;
+    float currentDepth = saturate(clip.z * invW);
     
     // Use explicit LOD to avoid gradient use in dynamic loops
     float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uv, 0).r;
-    return (currentDepth - SpotShadowBias) > sd ? 0.0f : 1.0f;
+    return (currentDepth) > sd ? 0.0f : 1.0f;
 }
 
 // Safe Normalize Util Functions
@@ -832,7 +834,7 @@ PS_INPUT Uber_VS(VS_INPUT Input)
 }
 
 // Pixel Shader
-PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
+PS_OUTPUT Uber_PS(PS_INPUT Input)
 {
     PS_OUTPUT Output;
     float4 finalPixel = float4(0.0f, 0.0f, 0.0f, 1.0f);
