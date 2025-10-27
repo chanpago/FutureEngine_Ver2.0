@@ -42,7 +42,8 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
 	// +-+-+ BIND SHADOW MAP CONSTANT BUFFER AND SRV +-+-+
 	FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-	if (LightBufferPass && (Context.ShowFlags & EEngineShowFlags::SF_Shadow))
+	UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
+	if (LightBufferPass && Light && (Context.ShowFlags & EEngineShowFlags::SF_Shadow))
 	{
 		const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
 		const EShadowFilterType FilterType = Context.ShadowFilterType;
