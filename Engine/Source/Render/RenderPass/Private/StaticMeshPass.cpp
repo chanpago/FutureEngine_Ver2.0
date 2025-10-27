@@ -82,7 +82,11 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			break;
 		}
 		case EShadowProjectionType::CSM:
+		{
+			ShadowConsts = LightBufferPass->GetCascadedShadowMapConstants();
+			ShadowConsts.bUseCSM = 1.0f;
 			break;
+		}
 		default:
 			break;
 		}
@@ -130,15 +134,14 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
 
 			// +-+-+ BIND CONSTANT & RESOURCES +-+-+
-			/*if (ShadowConsts.bUseCSM)
+			if (ShadowConsts.bUseCSM)
 			{
 				Pipeline->SetShaderResourceView(11, EShaderType::PS, ShadowMapSRV);
 			}
-			else
+			else   // LVP or PSM
 			{
 				Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
-			}*/
-			Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
+			}
 
 			// +-+-+ SET SAMPLER +-+-+
 			Pipeline->SetSamplerState(0, EShaderType::PS, Renderer.GetDefaultSampler());

@@ -36,6 +36,7 @@ public:
 	    TArray<FMatrix> LightViews;
 	    TArray<FMatrix> LightProjs;
 	    FVector4        LightOrthoParams; // For EShadowProjectionType::None
+		FVector4		CascadeSplits;	  // For EShadowProjectionType::CSM
 	};
 
 private:
@@ -45,8 +46,8 @@ private:
 
 	// Helper Functions
 	void CalculateShadowMatrices(EShadowProjectionType ProjType, FRenderingContext& Context, FShadowCalculationData& OutShadowData);
-	void SetShadowRenderTarget(EShadowFilterType FilterType, int CascadeIndex);
-	void UpdateShadowCasterConstants(EShadowProjectionType ProjType, const FShadowCalculationData& InShadowData, FRenderingContext& Context);
+	void SetShadowRenderTarget(EShadowProjectionType ProjType, EShadowFilterType FilterType, int CascadeIndex);
+	void UpdateShadowCasterConstants(EShadowProjectionType ProjType, const FShadowCalculationData& InShadowData, int CascadeIndex, FRenderingContext& Context);
 
 	// Shadow Map Shaders
 	ID3D11VertexShader* ShadowMapVS = nullptr;

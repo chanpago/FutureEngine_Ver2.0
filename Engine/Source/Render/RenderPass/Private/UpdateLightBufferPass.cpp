@@ -62,7 +62,6 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
     NewBakeShadowMap(Context);
 }
 
-
 void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
 {
     // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
@@ -102,13 +101,13 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
     FShadowCalculationData LightData;
     CalculateShadowMatrices(ProjectionType, Context, LightData);
 
-    for (int i = 0; i < LightData.LightViews.size(); i++)
+    for (int Idx = 0; Idx < LightData.LightViews.size(); Idx++)
     {
         // Set render target
-        SetShadowRenderTarget(FilterType, i);
+        SetShadowRenderTarget(ProjectionType, FilterType, Idx);
 
         // Update constant buffer (b6)
-        UpdateShadowCasterConstants(ProjectionType, LightData, Context);
+        UpdateShadowCasterConstants(ProjectionType, LightData, Idx, Context);
 
         // Render all objects in the scene.
         for (auto MeshComp : Context.StaticMeshes)
@@ -152,70 +151,70 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     const bool bUseCSM = (Context.ShowFlags & EEngineShowFlags::SF_CSM) != 0;
     if (bUseCSM)
     {
-        UE_LOG("CSM Path Enabled: Generate Cascaded Shadow Maps.");
+        //UE_LOG("CSM Path Enabled: Generate Cascaded Shadow Maps.");
 
-        const UCamera* Camera = Context.CurrentCamera;
-        if (!Camera) return;
+        //const UCamera* Camera = Context.CurrentCamera;
+        //if (!Camera) return;
 
-        UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
-        if (!Light) return;
+        //UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
+        //if (!Light) return;
 
         CascadedShadowMapConstants = {};
-        CalculateCascadeSplits(CascadedShadowMapConstants.CascadeSplits, Camera);
+        //CalculateCascadeSplits(CascadedShadowMapConstants.CascadeSplits, Camera);
 
-        const float* pSplits = &CascadedShadowMapConstants.CascadeSplits.X;
+        //const float* pSplits = &CascadedShadowMapConstants.CascadeSplits.X;
         DeviceContext->RSSetViewports(1, &DirectionalShadowViewport);
 
         for (int i = 0; i < MAX_CASCADES; i++)
         {
-            ID3D11DepthStencilView* CurrentDsv = Renderer.GetInstance().GetDeviceResources()->GetCascadedShadowMapDSV(i);
+            /*ID3D11DepthStencilView* CurrentDsv = Renderer.GetInstance().GetDeviceResources()->GetCascadedShadowMapDSV(i);
             DeviceContext->OMSetRenderTargets(0, nullptr, CurrentDsv);
-            DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);*/
 
-            // Calculate current cascade slices' corner
-            float NearSplit = (i == 0) ? Camera->GetNearZ() : pSplits[i - 1];
-            float FarSplit = pSplits[i];
-            FVector FrustumCorners[8];
-            Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
+            //// Calculate current cascade slices' corner
+            //float NearSplit = (i == 0) ? Camera->GetNearZ() : pSplits[i - 1];
+            //float FarSplit = pSplits[i];
+            //FVector FrustumCorners[8];
+            //Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
 
-            // Calculate the center of cascade slice
-            FVector FrustumCenter = FVector::ZeroVector();
-            for (int j = 0; j < 8; j++)
-            {
-                FrustumCenter += FrustumCorners[j];
-            }
-            FrustumCenter /= 8.0f;
+            //// Calculate the center of cascade slice
+            //FVector FrustumCenter = FVector::ZeroVector();
+            //for (int j = 0; j < 8; j++)
+            //{
+            //    FrustumCenter += FrustumCorners[j];
+            //}
+            //FrustumCenter /= 8.0f;
 
             // Calculate the light's View matrix based on the frustum's center point 
-            FMatrix LightViewMatrix;
-            {
-                // Set light position
-                FVector LightDir = Light->GetForwardVector().GetNormalized();
-                float ShadowDistance = 250.0f;
-                /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
-                float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
-                FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
+            //FMatrix LightViewMatrix;
+            //{
+            //    // Set light position
+            //    FVector LightDir = Light->GetForwardVector().GetNormalized();
+            //    float ShadowDistance = 250.0f;
+            //    /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
+            //    float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
+            //    FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
 
-                // light source targets the center of slice
-                FVector TargetPos = FrustumCenter;
-                FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
+            //    // light source targets the center of slice
+            //    FVector TargetPos = FrustumCenter;
+            //    FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
 
-                // LookAt matrix
-                FVector ZAxis = (TargetPos - LightPos).GetNormalized();
-                FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
-                FVector YAxis = ZAxis.Cross(XAxis);
+            //    // LookAt matrix
+            //    FVector ZAxis = (TargetPos - LightPos).GetNormalized();
+            //    FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
+            //    FVector YAxis = ZAxis.Cross(XAxis);
 
-                LightViewMatrix = FMatrix::Identity();
-                LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
-                LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
-                LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
-                LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
-                LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
-                LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
-            }
+            //    LightViewMatrix = FMatrix::Identity();
+            //    LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
+            //    LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
+            //    LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
+            //    LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
+            //    LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
+            //    LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
+            //}
 
-            // Calculate a tight Projection matrix
-            FMatrix CascadeLightProj;
+            //// Calculate a tight Projection matrix
+            /*FMatrix CascadeLightProj;
             {
                 FVector FrustumCornersLightView[8];
                 for (int j = 0; j < 8; j++)
@@ -242,14 +241,14 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                 CascadeLightProj.Data[3][0] = -(MaxVec.X + MinVec.X) / (MaxVec.X - MinVec.X);
                 CascadeLightProj.Data[3][1] = -(MaxVec.Y + MinVec.Y) / (MaxVec.Y - MinVec.Y);
                 CascadeLightProj.Data[3][2] = -MinVec.Z / (MaxVec.Z - MinVec.Z);
-            }
-            CascadedShadowMapConstants.LightViewP[i] = LightViewMatrix;
-            CascadedShadowMapConstants.LightProjP[i] = CascadeLightProj;
+            }*/
+            //CascadedShadowMapConstants.LightViewP[i] = LightViewMatrix;
+            //CascadedShadowMapConstants.LightProjP[i] = CascadeLightProj;
 
-            FCameraConstants LightCameraConsts;
+            /*FCameraConstants LightCameraConsts;
             LightCameraConsts.View = LightViewMatrix;
             LightCameraConsts.Projection = CascadeLightProj;
-            FRenderResourceFactory::UpdateConstantBufferData(LightCameraConstantBuffer, LightCameraConsts);
+            FRenderResourceFactory::UpdateConstantBufferData(LightCameraConstantBuffer, LightCameraConsts);*/
 
             for (auto MeshComp : Context.StaticMeshes)
             {
@@ -771,13 +770,13 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
     OutShadowData.LightViews.clear();
     OutShadowData.LightProjs.clear();
 
+    UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
+    if (!Light) return;
+
     switch (ProjType)
     {
     case EShadowProjectionType::Default:
     {
-        UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
-        if (!Light) return;
-
         // === LVP용: 월드 전체 AABB 집계 (카메라에 독립)
         FVector SceneMin(+FLT_MAX, +FLT_MAX, +FLT_MAX);
         FVector SceneMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
@@ -881,38 +880,139 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
     case EShadowProjectionType::PSM:
         break;
     case EShadowProjectionType::CSM:
+    {
+        const UCamera* Camera = Context.CurrentCamera;
+        if (!Camera) return;
+
+        CalculateCascadeSplits(OutShadowData.CascadeSplits, Camera);
+        const float* pSplits = &OutShadowData.CascadeSplits.X;
+
+        for (int i = 0; i < MAX_CASCADES; i++)
+        {
+            // Calculate current cascade slices' corner
+            float NearSplit = (i == 0) ? Camera->GetNearZ() : pSplits[i - 1];
+            float FarSplit = pSplits[i];
+            FVector FrustumCorners[8];
+            Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
+
+            // Calculate the center of cascade slice
+            FVector FrustumCenter = FVector::ZeroVector();
+            for (int j = 0; j < 8; j++)
+            {
+                FrustumCenter += FrustumCorners[j];
+            }
+            FrustumCenter /= 8.0f;
+
+            // Calculate the light's View matrix based on the frustum's center point 
+            FMatrix LightViewMatrix;
+            {
+                // Set light position
+                FVector LightDir = Light->GetForwardVector().GetNormalized();
+                float ShadowDistance = 200.0f;
+                /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
+                float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
+                FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
+
+                // light source targets the center of slice
+                FVector TargetPos = FrustumCenter;
+                FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
+
+                // LookAt matrix
+                FVector ZAxis = (TargetPos - LightPos).GetNormalized();
+                FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
+                FVector YAxis = ZAxis.Cross(XAxis);
+
+                LightViewMatrix = FMatrix::Identity();
+                LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
+                LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
+                LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
+                LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
+                LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
+                LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
+            }
+
+            // Calculate a tight Projection matrix
+            FMatrix CascadeLightProj;
+            {
+                FVector FrustumCornersLightView[8];
+                for (int j = 0; j < 8; j++)
+                {
+                    FrustumCornersLightView[j] = FVector4(FrustumCorners[j], 1.0f) * LightViewMatrix;
+                }
+
+                FVector MinVec = FrustumCornersLightView[0];
+                FVector MaxVec = FrustumCornersLightView[0];
+                for (int j = 0; j < 8; j++)
+                {
+                    MinVec.X = std::min(MinVec.X, FrustumCornersLightView[j].X);
+                    MinVec.Y = std::min(MinVec.Y, FrustumCornersLightView[j].Y);
+                    MinVec.Z = std::min(MinVec.Z, FrustumCornersLightView[j].Z);
+                    MaxVec.X = std::max(MaxVec.X, FrustumCornersLightView[j].X);
+                    MaxVec.Y = std::max(MaxVec.Y, FrustumCornersLightView[j].Y);
+                    MaxVec.Z = std::max(MaxVec.Z, FrustumCornersLightView[j].Z);
+                }
+
+                CascadeLightProj = FMatrix::Identity();
+                CascadeLightProj.Data[0][0] = 2.0f / (MaxVec.X - MinVec.X);
+                CascadeLightProj.Data[1][1] = 2.0f / (MaxVec.Y - MinVec.Y);
+                CascadeLightProj.Data[2][2] = 1.0f / (MaxVec.Z - MinVec.Z);
+                CascadeLightProj.Data[3][0] = -(MaxVec.X + MinVec.X) / (MaxVec.X - MinVec.X);
+                CascadeLightProj.Data[3][1] = -(MaxVec.Y + MinVec.Y) / (MaxVec.Y - MinVec.Y);
+                CascadeLightProj.Data[3][2] = -MinVec.Z / (MaxVec.Z - MinVec.Z);
+            }
+
+            CascadedShadowMapConstants.LightViewP[i] = LightViewMatrix;
+            CascadedShadowMapConstants.LightProjP[i] = CascadeLightProj;
+
+            OutShadowData.LightViews.push_back(LightViewMatrix);
+            OutShadowData.LightProjs.push_back(CascadeLightProj);
+        }
+        break;
+    }
+    default:
         break;
     }
 }
 
-void FUpdateLightBufferPass::SetShadowRenderTarget(EShadowFilterType FilterType, int CascadeIndex)
+void FUpdateLightBufferPass::SetShadowRenderTarget(EShadowProjectionType ProjType, EShadowFilterType FilterType, int CascadeIndex)
 {
     const auto& Renderer = URenderer::GetInstance();
     auto DeviceContext = Renderer.GetDeviceContext();
 
-    if (FilterType == EShadowFilterType::VSM)
+    if (ProjType == EShadowProjectionType::CSM)
     {
-        // Set Shadow Map DSV
-        ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
-        ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
-        // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
-        ID3D11ShaderResourceView* NullSRV = nullptr;
-        DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
-        DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // 색상 정보는 ShadowRTV에, 깊이 정보는 ShadowDSV에 기록, GPU는 두개의 목적지를 모두 출력 대상으로 인식
-        const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };   // VSM Default
-        DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
-        DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        ID3D11DepthStencilView* CurrentDsv = Renderer.GetInstance().GetDeviceResources()->GetCascadedShadowMapDSV(CascadeIndex);
+        DeviceContext->OMSetRenderTargets(0, nullptr, CurrentDsv);
+        DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+        // TODO: VSM + CSM... (get color RTV from array)
     }
-    else  // None OR PCF 
+    else
     {
-        ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
-        DeviceContext->OMSetRenderTargets(0, nullptr, ShadowDSV);
-        DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        if (FilterType == EShadowFilterType::VSM)
+        {
+            // Set Shadow Map DSV
+            ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
+            ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
+            // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
+            ID3D11ShaderResourceView* NullSRV = nullptr;
+            DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+            DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // 색상 정보는 ShadowRTV에, 깊이 정보는 ShadowDSV에 기록, GPU는 두개의 목적지를 모두 출력 대상으로 인식
+            const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };   // VSM Default
+            DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
+            DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
+        else  // None OR PCF 
+        {
+            ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
+            DeviceContext->OMSetRenderTargets(0, nullptr, ShadowDSV);
+            DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
     }
     DeviceContext->RSSetViewports(1, &DirectionalShadowViewport);
 }
 
-void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType ProjType, const FShadowCalculationData& InShadowData, FRenderingContext& Context)
+void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType ProjType, const FShadowCalculationData& InShadowData, int CascadeIndex, FRenderingContext& Context)
 {
     UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
     if (!Light) return;
@@ -945,7 +1045,12 @@ void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType P
     }
     else if (ProjType == EShadowProjectionType::CSM)
     {
+        CasterConsts.bUseCSM = 1;
 
+        CasterConsts.LightViewP[0] = InShadowData.LightViews[CascadeIndex];
+        CasterConsts.LightProjP[0] = InShadowData.LightProjs[CascadeIndex];
+
+        CasterConsts.CascadeSplits = InShadowData.CascadeSplits;
     }
 
     FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, CasterConsts);
