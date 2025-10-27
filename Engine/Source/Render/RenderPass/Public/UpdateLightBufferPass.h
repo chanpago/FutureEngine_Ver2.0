@@ -32,8 +32,8 @@ public:
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
 private:
-	void BakeShadowMap(FRenderingContext& Context);
-	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
+    void BakeShadowMap(FRenderingContext& Context);
+    void RenderPrimitive(class UStaticMeshComponent* MeshComp);
 
     // Refactored helpers (directional)
     void RenderDirectionalCSM(FRenderingContext& Context);
@@ -50,6 +50,38 @@ private:
     // Future extension points (stubs): spot/point
     // void RenderSpotShadows(FRenderingContext& Context);
     // void RenderPointShadows(FRenderingContext& Context);
+
+    // Shared small utilities (primarily for directional now; reusable for spot/point later)
+    void ComputeSceneWorldAABB(const FRenderingContext& Context, FVector& OutMin, FVector& OutMax) const;
+    void BindDirectionalShadowTargetsAndClear(ID3D11DeviceContext* DeviceContext, ID3D11DepthStencilView*& OutDSV, ID3D11RenderTargetView*& OutRTV) const;
+	
+    FMatrix BuildDirectionalLightViewMatrix(const UDirectionalLightComponent* Light, const FVector& LightPosition) const;
+	
+    FMatrix OrthoRowLH(float l, float r, float b, float t, float zn, float zf) const;
+    void ComputeDirectionalOrthoBounds(const FMatrix& LightView, const FVector& SceneMin, const FVector& SceneMax,
+    	float& OutMinX, float& OutMaxX, float& OutMinY, float& OutMaxY, float& OutMinZ, float& OutMaxZ) const;
+	
+    void SnapDirectionalBoundsToTexelGrid(const FMatrix& LightView, const FVector& SceneMin, const FVector& SceneMax,
+    	float& InOutMinX, float& InOutMaxX, float& InOutMinY, float& InOutMaxY, const D3D11_VIEWPORT& Viewport) const;
+	
+    void UpdateDirectionalLVPConstants(const UDirectionalLightComponent* Light, const FMatrix& LightView, const FMatrix& LightProj,
+    	float l, float r, float b, float t, const D3D11_VIEWPORT& Viewport);
+    void DrawAllStaticReceivers(const FRenderingContext& Context);
+
+    // PSM helpers (reusable for other light types later)
+    void ComputeReceiverNDCBox(const FRenderingContext& Context, const FMatrix& CameraView, const FMatrix& CameraProj,
+    	FVector& OutNdcMin, FVector& OutNdcMax) const;
+    FMatrix BuildLookAtRowLH(const FVector& Eye, const FVector& At, const FVector& UpHint) const;
+    void FitLightToNDCBox(const FVector& LightDirWorld, const FVector& ndcMin, const FVector& ndcMax,
+    	const FMatrix& CameraView, const FMatrix& CameraProj, FMatrix& OutV, FMatrix& OutP, FVector4& OutLTRB,
+    	float& OutNear, float& OutFar) const;
+    void ApplyTexelSnappingToLightView(float& InOutL, float& InOutR, float& InOutB, float& InOutT,
+    	float shadowMapWidth, float shadowMapHeight) const;
+
+    // Packs PSM constants for directional light (updates member cached matrices as well)
+    void UpdateDirectionalPSMConstants(const FRenderingContext& Context,
+                                       const UDirectionalLightComponent* Light,
+                                       const D3D11_VIEWPORT& Viewport);
 
 	// Shadow Map Shaders
 	ID3D11VertexShader* ShadowMapVS = nullptr;
