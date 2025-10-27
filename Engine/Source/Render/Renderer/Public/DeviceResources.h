@@ -25,6 +25,9 @@ public:
 	// Shadow Map Resources
 	void CreateShadowMapResources();
 	void ReleaseShadowMapResources();
+	void CreateSpotShadowMapResources();
+	void ReleaseSpotShadowMapResources();
+
 	void CreatePointShadowMapResources();
 	// CSM Resources
 	void CreateCascadedShadowMap();
@@ -52,6 +55,10 @@ public:
 	ID3D11RenderTargetView* GetDirectionalShadowMapColorRTV() const { return DirectionalShadowMapColorRTV; }
 	ID3D11ShaderResourceView* GetDirectionalShadowMapColorSRV() const {return DirectionalShadowMapColorSRV; }
 	ID3D11Texture2D* GetDirectionalShadowMapColorTexture() const {return DirectionalShadowMapColorTexture; }
+
+	// Spot Light Shadow Map Getters
+	ID3D11DepthStencilView* GetSpotShadowMapDSV() const { return SpotShadowMapDSV; }
+	ID3D11ShaderResourceView* GetSpotShadowMapSRV() const { return SpotShadowMapSRV; }
 
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
@@ -116,6 +123,11 @@ private:
 	// Shadow Map을 만드는 동안 Z-test를 활성화하기 위한 임시 깊이 버퍼
 	ID3D11Texture2D* PointShadowMapTexture = nullptr; // D32_FLOAT 포맷의 1024x1024 텍스처
 	ID3D11DepthStencilView* PointShadowMapDSV = nullptr; // 위 텍스처에 쓰기 위한 DSV
+
+	// Spot Light Shadow Map
+	ID3D11Texture2D* SpotShadowMapTexture = nullptr;
+	ID3D11DepthStencilView* SpotShadowMapDSV = nullptr;
+	ID3D11ShaderResourceView* SpotShadowMapSRV = nullptr;
 
 	// CSM Resources
 	ID3D11Texture2D* CascadedShadowMapTexture = nullptr;

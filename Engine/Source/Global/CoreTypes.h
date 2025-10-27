@@ -194,3 +194,20 @@ struct FShadowMapConstants
 	uint32  bUseCSM;	// 0 = no CSM, 1 = enable CSM
 	float   Padding[2];
 };
+
+// Spot Light dedicated shadow constants (single spot caster)
+struct FSpotShadowConstants
+{
+    FMatrix LightView;      // spot view
+    FMatrix LightProj;      // spot projection (perspective)
+    FVector SpotPosition;   // world pos
+    float   SpotRange;      // max range
+    FVector SpotDirection;  // world dir (normalized)
+    float   OuterCone;      // radians
+    float   InnerCone;      // radians
+    FVector2 ShadowMapSize; // (Sx, Sy)
+    float   ShadowBias;     // depth bias
+    uint32  bUseVSM;        // 0/1
+    uint32  bUsePCF;        // 0/1
+    float   Padding;        // align to 16 bytes
+};

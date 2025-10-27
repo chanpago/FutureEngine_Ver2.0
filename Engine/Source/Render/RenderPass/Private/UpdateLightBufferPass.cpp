@@ -60,6 +60,7 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
     // Shadow Map 베이킹 실행
     //BakeShadowMap(Context);
     NewBakeShadowMap(Context);
+    BakeSpotShadowMap(Context);
 }
 
 void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
@@ -117,6 +118,121 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
         }
     }
 
+    // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    DeviceContext->RSSetViewports(1, &OriginalViewport);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
+
+void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
+{
+    // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+
+    // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
+    const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+    const EShadowFilterType FilterType = Context.ShadowFilterType;
+    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+
+    // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(12, 1, &NullSRV);
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    ID3D11RenderTargetView* OriginalRTVs = nullptr;  
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
+
+    // +-+-+ SET UP THE PIPELINE FOR SHADOW MAP RENDERING +-+-+
+    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
+    FPipelineInfo PipelineInfo = {
+        ShadowMapInputLayout,
+        ShadowMapVS,
+        RS,
+        URenderer::GetInstance().GetDefaultDepthStencilState(),
+        URenderer::GetInstance().GetPixelShader(FilterType),  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
+        nullptr,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    };
+    Pipeline->UpdatePipeline(PipelineInfo);
+
+
+    // +-+-+ BAKE SPOTLIGHT SHADOW MAP (single caster) +-+-+
+    if (!Context.SpotLights.empty())
+    {
+        USpotLightComponent* SpotCaster = nullptr;
+        for (auto* SL : Context.SpotLights)
+        {
+            // if (SL && SL->GetCastShadows())
+            // {
+                SpotCaster = SL;
+                break;
+            // }
+        }
+
+        if (SpotCaster)
+        {
+            ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
+            DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+            DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+            DeviceContext->RSSetViewports(1, &SpotShadowViewport);
+
+            // Build spot light view matrix
+            const FVector eye = SpotCaster->GetWorldLocation();
+            const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
+            const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+            const FVector right = tmpUp.Cross(fwd).GetNormalized();
+            const FVector up = fwd.Cross(right);
+
+            FMatrix V = FMatrix::Identity();
+            V.Data[0][0]=right.X; V.Data[0][1]=up.X; V.Data[0][2]=fwd.X;
+            V.Data[1][0]=right.Y; V.Data[1][1]=up.Y; V.Data[1][2]=fwd.Y;
+            V.Data[2][0]=right.Z; V.Data[2][1]=up.Z; V.Data[2][2]=fwd.Z;
+            V.Data[3][0]= -eye.Dot(right);
+            V.Data[3][1]= -eye.Dot(up);
+            V.Data[3][2]= -eye.Dot(fwd);
+
+            // Perspective projection (row-vector LH)
+            const float fov = std::max(0.001f, SpotCaster->GetOuterConeAngle()) * 2.0f;
+            const float aspect = 1.0f;
+            const float zn = 0.1f;
+            const float zf = std::max(zn + 0.1f, SpotCaster->GetAttenuationRadius());
+            FMatrix P = FMatrix::Identity();
+            const float yScale = 1.0f / tanf(fov * 0.5f);
+            const float xScale = yScale / aspect;
+            P.Data[0][0] = xScale;
+            P.Data[1][1] = yScale;
+            P.Data[2][2] = zf / (zf - zn);
+            P.Data[3][2] = -zn * zf / (zf - zn);
+            P.Data[2][3] = 1.0f;
+            P.Data[3][3] = 0.0f;
+
+            // Update constant buffer used by shadow depth pass (b6 VS)
+            FShadowMapConstants SpotCasterConsts = {};
+            SpotCasterConsts.LightViewP[0] = V;
+            SpotCasterConsts.LightProjP[0] = P;
+            SpotCasterConsts.LightViewPInv[0] = V.Inverse();
+            SpotCasterConsts.ShadowMapSize = FVector2(SpotShadowViewport.Width, SpotShadowViewport.Height);
+            SpotCasterConsts.ShadowParams = FVector4(0.0008f, 0, 0, 0);
+            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, SpotCasterConsts);
+
+            // Cache for later (StaticMeshPass builds separate PS constants for spot)
+            SpotLightView = V;
+            SpotLightProj = P;
+
+            // Render scene from spot light POV
+            for (auto MeshComp : Context.StaticMeshes)
+            {
+                if (!MeshComp || !MeshComp->IsVisible()) continue;
+                RenderPrimitive(MeshComp);
+            }
+        }
+    }
+    
     // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
