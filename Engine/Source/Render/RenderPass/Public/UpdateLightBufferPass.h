@@ -31,10 +31,22 @@ public:
 	void CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera);
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
+	struct FShadowCalculationData
+	{
+	    TArray<FMatrix> LightViews;
+	    TArray<FMatrix> LightProjs;
+	    FVector4        LightOrthoParams; // For EShadowProjectionType::None
+	};
+
 private:
 	void NewBakeShadowMap(FRenderingContext& Context);
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
+
+	// Helper Functions
+	void CalculateShadowMatrices(EShadowProjectionType ProjType, FRenderingContext& Context, FShadowCalculationData& OutShadowData);
+	void SetShadowRenderTarget(EShadowFilterType FilterType, int CascadeIndex);
+	void UpdateShadowCasterConstants(EShadowProjectionType ProjType, const FShadowCalculationData& InShadowData, FRenderingContext& Context);
 
 	// Shadow Map Shaders
 	ID3D11VertexShader* ShadowMapVS = nullptr;
