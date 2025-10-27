@@ -882,7 +882,7 @@ void URenderer::RenderLevel(FViewport* InViewport)
 		}
 		if (auto DirectionalLightComponent = Cast<UDirectionalLightComponent>(LightComponent))
 		{
-			RenderingContext.DirectionalLights.push_back(DirectionalLightComponent);
+			RenderingContext.DirectionalLight = DirectionalLightComponent;
 		}
 		
 		if (auto AmbientLightComponent = Cast<UAmbientLightComponent>(LightComponent))

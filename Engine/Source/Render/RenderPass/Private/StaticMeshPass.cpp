@@ -102,14 +102,14 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			ShadowMapConsts.LightViewPInv[0] = ShadowMapConsts.LightViewP[0].Inverse();
 
 			ShadowMapConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
-			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
+			FVector LdirWS = (-Context.DirectionalLight->GetForwardVector()).GetNormalized();
 			ShadowMapConsts.LightDirWS = LdirWS;
 			ShadowMapConsts.bInvertedLight = 0;
 
 			ShadowMapConsts.LightOrthoParams = UpdateLightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
 
 			ShadowMapConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
-			ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+			ShadowMapConsts.bUsePSM = Context.DirectionalLight->GetCastShadows();
 			ShadowMapConsts.bUseVSM = bUseVSM ? 1.0f : 0.0f;
 			ShadowMapConsts.bUsePCF = bUsePCF ? 1.0f : 0.0f;
 

@@ -23,7 +23,7 @@ struct FRenderingContext
     TArray<class UDecalComponent*> Decals;
     TArray<class UPointLightComponent*> PointLights;
     TArray<class USpotLightComponent*> SpotLights;
-    TArray<class UDirectionalLightComponent*> DirectionalLights;
+    class UDirectionalLightComponent* DirectionalLight;
     TArray<class UAmbientLightComponent*> AmbientLights;
     TArray<class UHeightFogComponent*> Fogs;
 };

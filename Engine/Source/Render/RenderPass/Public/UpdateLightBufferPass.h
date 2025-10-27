@@ -35,6 +35,22 @@ private:
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
 
+    // Refactored helpers (directional)
+    void RenderDirectionalCSM(FRenderingContext& Context);
+    void RenderDirectionalShadowSimple(FRenderingContext& Context);
+
+    // Begin/End helpers for shadow-bake pass state
+    void BeginShadowBake(ID3D11DeviceContext* DeviceContext,
+                         D3D11_VIEWPORT& OutOriginalViewport,
+                         ID3D11RenderTargetView*& OutOriginalRTV,
+                         ID3D11DepthStencilView*& OutOriginalDSV);
+    void EndShadowBake(ID3D11DeviceContext* DeviceContext,
+                       const D3D11_VIEWPORT& OriginalViewport);
+
+    // Future extension points (stubs): spot/point
+    // void RenderSpotShadows(FRenderingContext& Context);
+    // void RenderPointShadows(FRenderingContext& Context);
+
 	// Shadow Map Shaders
 	ID3D11VertexShader* ShadowMapVS = nullptr;
 	ID3D11PixelShader* ShadowMapPS = nullptr;

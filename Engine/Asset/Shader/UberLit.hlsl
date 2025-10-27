@@ -264,7 +264,7 @@ struct PS_OUTPUT
     float4 NormalData : SV_Target1;
 };
 
-float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
+float CalculateVSM(float2 Moments, float CurrentDepth)
 {
     // VSM: configurable smoothing via mip bias
     static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
@@ -384,9 +384,8 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
         // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
         
-        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
         float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
-        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+        return CalculateVSM(Moments, CurrentDepth);
     }
     else if ((bUseVSM < 0.5f && bUsePCF < 0.5f) || (bUseVSM > 0.5f && bUsePCF > 0.5f))
     {
@@ -426,7 +425,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     {
         static const float VSM_MipBias = 1.25f; // Increase for softer shadows
         float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
-        CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+        return CalculateVSM(Moments, CurrentDepth);
     }
     return 1.0f;
 }

@@ -133,19 +133,14 @@ void FLightPass::Execute(FRenderingContext& Context)
 		}
 	}
 
-	if (!Context.DirectionalLights.empty())
+	if (Context.DirectionalLight)
 	{
 		UDirectionalLightComponent* VisibleDirectional = nullptr;
-		for (UDirectionalLightComponent* Directional : Context.DirectionalLights)
+		UDirectionalLightComponent* Directional = Context.DirectionalLight;
+
+		if (Directional != nullptr && Directional->GetVisible() && Directional->GetLightEnabled())
 		{
-			if (Directional != nullptr && Directional->GetVisible() && Directional->GetLightEnabled())
-			{
-				VisibleDirectional = Directional;
-				break;
-			}
-		}
-		if (VisibleDirectional != nullptr)
-		{
+			VisibleDirectional = Directional;
 			GlobalLightData.Directional = VisibleDirectional->GetDirectionalLightInfo();
 		}
 	}
