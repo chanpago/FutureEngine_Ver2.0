@@ -1310,6 +1310,29 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
                     MaxVec.Z = std::max(MaxVec.Z, FrustumCornersLightView[j].Z);
                 }
 
+                // +-+-+ Texel Snapping (prevents shadow shimmering) +-+-+
+                {
+                    const float ShadowMapResolution = DirectionalShadowViewport.Width;
+                    // stabilize shadow map edges
+                    float worldUnitsPerTexelX = (MaxVec.X - MinVec.X) / ShadowMapResolution;
+                    float worldUnitsPerTexelY = (MaxVec.Y - MinVec.Y) / ShadowMapResolution;
+
+                    // Snap based on the center
+                    FVector Center = (MinVec + MaxVec) * 0.5f;
+
+                    // Snap the center coordinates to texel units in light view space
+                    Center.X = std::floor(Center.X / worldUnitsPerTexelX) * worldUnitsPerTexelX;
+                    Center.Y = std::floor(Center.Y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
+
+                    // Recalculate min/max based on the snapped center
+                    const float halfRangeX = (MaxVec.X - MinVec.X) * 0.5f;
+                    const float halfRangeY = (MaxVec.Y - MinVec.Y) * 0.5f;
+                    MinVec.X = Center.X - halfRangeX;
+                    MinVec.Y = Center.Y - halfRangeY;
+                    MaxVec.X = Center.X + halfRangeX;
+                    MaxVec.Y = Center.Y + halfRangeY;
+                }
+
                 CascadeLightProj = FMatrix::Identity();
                 CascadeLightProj.Data[0][0] = 2.0f / (MaxVec.X - MinVec.X);
                 CascadeLightProj.Data[1][1] = 2.0f / (MaxVec.Y - MinVec.Y);
