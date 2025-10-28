@@ -225,62 +225,63 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		}
 		
 		 // Bind point light shadow (single caster for now)
-		 if (!Context.PointLights.empty())
-		 {
-		     UPointLightComponent* PointCaster = nullptr;
-		     int lightIndex = 0;
-		     for (int i = 0; i < Context.PointLights.size(); ++i)
-		     {
-		         // if (Context.PointLights[i] && Context.PointLights[i]->GetCastShadows()) // GetCastShadows() is not implemented yet
-		         // {
-		             PointCaster = Context.PointLights[i];
-		             lightIndex = i;
-		             break;
-		         // }
-		     }
-		
-		     if (PointCaster)
-		     {
-		         FPointShadowConstants PointConsts = {};
-		         PointConsts.LightPos = PointCaster->GetWorldLocation();
-		         PointConsts.FarPlane = PointCaster->GetAttenuationRadius();
-		         PointConsts.ShadowBias = 0.05f;
-		         PointConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
-		         PointConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
-		         PointConsts.ShadowMapIndex = lightIndex;
-		
-		         FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferPointShadow, PointConsts);
-		         Pipeline->SetConstantBuffer(8, EShaderType::PS, ConstantBufferPointShadow);
+		if (!Context.PointLights.empty())
+		{
+			UPointLightComponent* PointCaster = nullptr;
+			int lightIndex = 0;
+			for (int i = 0; i < Context.PointLights.size(); ++i)
+			{
+				// if (Context.PointLights[i] && Context.PointLights[i]->GetCastShadows()) // GetCastShadows() is not implemented yet
+				// {
+				PointCaster = Context.PointLights[i];
+				lightIndex = i;
+				break;
+				// }
+			}
 
-				 const auto& DeviceResources = Renderer.GetDeviceResources();
-		         				ID3D11ShaderResourceView* PointSRV = DeviceResources->GetPointShadowMapColorSRV();
-		         				Pipeline->SetShaderResourceView(13, EShaderType::PS, PointSRV);
-		         
-		         				// Bind samplers for point light shadow
-		         				if (FilterType == EShadowFilterType::PCF)
-		         				{
-		         					Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
-		         				}
-		         				else if (FilterType == EShadowFilterType::VSM)
-		         				{
-		         					Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
-		         				}
-		         				else
-		         				{
-		         					Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
-		         				}
-		         			}
-		         		}
-		         		else
-		         		{
-		         			Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
-		         			Pipeline->SetConstantBuffer(8, EShaderType::PS, nullptr);
-		         		}	}
+			if (PointCaster)
+			{
+				FPointShadowConstants PointConsts = {};
+				PointConsts.LightPos = PointCaster->GetWorldLocation();
+				PointConsts.FarPlane = PointCaster->GetAttenuationRadius();
+				PointConsts.ShadowBias = 0.05f;
+				PointConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
+				PointConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
+				PointConsts.ShadowMapIndex = lightIndex;
+
+				FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferPointShadow, PointConsts);
+				Pipeline->SetConstantBuffer(8, EShaderType::PS, ConstantBufferPointShadow);
+
+				const auto& DeviceResources = Renderer.GetDeviceResources();
+				ID3D11ShaderResourceView* PointSRV = DeviceResources->GetPointShadowMapColorSRV();
+				Pipeline->SetShaderResourceView(13, EShaderType::PS, PointSRV);
+
+				// Bind samplers for point light shadow
+				if (FilterType == EShadowFilterType::PCF)
+				{
+					Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+				}
+				else if (FilterType == EShadowFilterType::VSM)
+				{
+					Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+				}
+				else
+				{
+					Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+				}
+			}
+		}
+		else
+		{
+			Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
+			Pipeline->SetConstantBuffer(8, EShaderType::PS, nullptr);
+		}	
+}
 		
-		    /**
-		    * @todo Find a better way to reduce depdency upon Renderer class.
-		    * @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
-		    */
+	/**
+	* @todo Find a better way to reduce depdency upon Renderer class.
+	* @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
+	*/
 	// +-+ RTVS SETUP +-+
 	const auto& DeviceResources = Renderer.GetDeviceResources();
 	ID3D11RenderTargetView* RTV = nullptr;

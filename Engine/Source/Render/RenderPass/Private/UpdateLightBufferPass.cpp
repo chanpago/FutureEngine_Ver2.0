@@ -242,39 +242,40 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
 
 void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
 {
+    // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
     if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
-
     const auto& Renderer = URenderer::GetInstance();
     auto DeviceContext = Renderer.GetDeviceContext();
     auto DeviceResources = Renderer.GetDeviceResources();
 
-    // Store original state
-    ID3D11ShaderResourceView* NullSRV[1] = { nullptr };
-    DeviceContext->PSSetShaderResources(13, 1, NullSRV); // Unbind point shadow map slot
-
-    UINT NumViewports = 1;
-    D3D11_VIEWPORT OriginalViewport;
-    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
-
-    ID3D11RenderTargetView* OriginalRTV = nullptr;
-    ID3D11DepthStencilView* OriginalDSV = nullptr;
-    DeviceContext->OMGetRenderTargets(1, &OriginalRTV, &OriginalDSV);
-
-    // Set up pipeline
+    // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
+    const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
     const EShadowFilterType FilterType = Context.ShadowFilterType;
+    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+
+    // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(13, 1, &NullSRV);
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    ID3D11RenderTargetView* OriginalRTVs = nullptr;
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
+
+    // +-+-+ SET UP THE PIPELINE FOR SHADOW MAP RENDERING +-+-+
     ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
     FPipelineInfo PipelineInfo = {
         ShadowMapInputLayout,
         ShadowMapVS,
         RS,
         URenderer::GetInstance().GetDefaultDepthStencilState(),
-        URenderer::GetInstance().GetPixelShader(FilterType), // For VSM
+        URenderer::GetInstance().GetPixelShader(FilterType),  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
         nullptr,
         D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
     };
     Pipeline->UpdatePipeline(PipelineInfo);
 
-    // Set viewport for point light shadow map
     DeviceContext->RSSetViewports(1, &PointShadowViewport);
 
     // 90-degree perspective projection for cubemap faces
@@ -302,73 +303,83 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
         V.Data[3][1] = -eye.Dot(up);
         V.Data[3][2] = -eye.Dot(fwd);
         return V;
-    };
+        };
 
-    ID3D11DepthStencilView* dsv = DeviceResources->GetPointShadowMapDSV();
-    DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    // Point용 DSV Get 및 Clear
+    ID3D11DepthStencilView* DSV = DeviceResources->GetPointShadowMapDSV();
+    DeviceContext->ClearDepthStencilView(DSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
-    // Loop through point lights
     for (int lightIndex = 0; lightIndex < Context.PointLights.size(); ++lightIndex)
     {
-        if (lightIndex >= NUM_POINT_LIGHT) break;
+        // 포인트 라이트 최대 개수 넘어가면 돌지 않음
+        if (lightIndex >= NUM_POINT_LIGHT)
+        {
+            break;
+        }
+        UPointLightComponent* PLight = Context.PointLights[lightIndex];
+        if (!PLight)
+        {
+            continue;
+        }
 
-        UPointLightComponent* pLight = Context.PointLights[lightIndex];
-        if (!pLight) continue;
+        const FVector LightPos = PLight->GetWorldLocation(); // light 위치
+        const float zf = std::max(zn + 0.1f, PLight->GetAttenuationRadius()); // z-far는 반지름
 
-        const FVector lightPos = pLight->GetWorldLocation();
-        const float zf = std::max(zn + 0.1f, pLight->GetAttenuationRadius());
-        
+        // Light Projection Matrix
         Proj.Data[2][2] = zf / (zf - zn);
         Proj.Data[3][2] = -zn * zf / (zf - zn);
 
-        FMatrix views[6];
-        views[0] = buildViewMatrixLH(lightPos, lightPos + FVector(1, 0, 0), FVector(0, 1, 0));  // +X
-        views[1] = buildViewMatrixLH(lightPos, lightPos + FVector(-1, 0, 0), FVector(0, 1, 0)); // -X
-        views[2] = buildViewMatrixLH(lightPos, lightPos + FVector(0, 1, 0), FVector(0, 0, -1)); // +Y
-        views[3] = buildViewMatrixLH(lightPos, lightPos + FVector(0, -1, 0), FVector(0, 0, 1)); // -Y
-        views[4] = buildViewMatrixLH(lightPos, lightPos + FVector(0, 0, 1), FVector(0, 1, 0));  // +Z
-        views[5] = buildViewMatrixLH(lightPos, lightPos + FVector(0, 0, -1), FVector(0, 1, 0)); // -Z
+        // Light View Matrix (6개)
+        FMatrix Views[6];
+        Views[0] = buildViewMatrixLH(LightPos, LightPos + FVector(1, 0, 0), FVector(0, 1, 0));  // +X
+        Views[1] = buildViewMatrixLH(LightPos, LightPos + FVector(-1, 0, 0), FVector(0, 1, 0)); // -X
+        Views[2] = buildViewMatrixLH(LightPos, LightPos + FVector(0, 1, 0), FVector(0, 0, -1)); // +Y
+        Views[3] = buildViewMatrixLH(LightPos, LightPos + FVector(0, -1, 0), FVector(0, 0, 1)); // -Y
+        Views[4] = buildViewMatrixLH(LightPos, LightPos + FVector(0, 0, 1), FVector(0, 1, 0));  // +Z
+        Views[5] = buildViewMatrixLH(LightPos, LightPos + FVector(0, 0, -1), FVector(0, 1, 0)); // -Z
 
-        for (int faceIndex = 0; faceIndex < 6; ++faceIndex)
+        // Point Light의 각 면마다 그리는 과정
+        for (int FaceIndex = 0; FaceIndex < 6; ++FaceIndex)
         {
-            ID3D11RenderTargetView* rtv = DeviceResources->GetPointShadowMapColorRTV(lightIndex * 6 + faceIndex);
-            
+            // 현재 사용할 RTV 가져오기
+            ID3D11RenderTargetView* RTV = DeviceResources->GetPointShadowMapColorRTV(lightIndex * 6 + FaceIndex);
             if (FilterType == EShadowFilterType::VSM)
             {
-                DeviceContext->OMSetRenderTargets(1, &rtv, dsv);
-                const float ClearColor[4] = { zf, zf * zf, 0.0f, 0.0f }; // VSM clear
-                DeviceContext->ClearRenderTargetView(rtv, ClearColor);
+                DeviceContext->OMSetRenderTargets(1, &RTV, DSV);
+                // VSM을 위한 RTV Clear
+                const float ClearColor[4] = { zf, zf * zf, 0.0f,0.0f };
+                DeviceContext->ClearRenderTargetView(RTV, ClearColor);
             }
             else
             {
-                DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+                DeviceContext->OMSetRenderTargets(0, nullptr, DSV);
             }
-
             FShadowMapConstants CasterConsts = {};
-            CasterConsts.bUsePSM = 0; // Use simple World->Light transform
-            CasterConsts.LightViewP[0] = views[faceIndex];
-            CasterConsts.LightProjP[0] = Proj;
-            CasterConsts.ShadowParams = FVector4(0.005f, 0.0f, 0.0f, 0.0f); // Basic bias
             CasterConsts.bUseVSM = (FilterType == EShadowFilterType::VSM);
+            CasterConsts.bUsePSM = 0;
+            CasterConsts.LightViewP[0] = Views[FaceIndex]; // 왜 0인지 모르겠으니 추후 파악
+            CasterConsts.LightProjP[0] = Proj;
             CasterConsts.ShadowMapSize = FVector2(PointShadowViewport.Width, PointShadowViewport.Height);
-            
-            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, CasterConsts);
 
+            // ShadowMap.hlsl의 b6 슬롯에 업데이트
+            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, CasterConsts);
+            
+            // 라이트 하나당 6개의 면에 대해서 staticmesh들을 그려야 함
             for (auto MeshComp : Context.StaticMeshes)
             {
-                if (!MeshComp || !MeshComp->IsVisible()) continue;
+                if (!MeshComp || !MeshComp->IsVisible())
+                {
+                    continue;
+                }
                 RenderPrimitive(MeshComp);
             }
         }
     }
-
     // Restore original state
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
-    DeviceContext->OMSetRenderTargets(1, &OriginalRTV, OriginalDSV);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
 
-    if (OriginalRTV) OriginalRTV->Release();
-    if (OriginalDSV) OriginalDSV->Release();
 }
 
 void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
