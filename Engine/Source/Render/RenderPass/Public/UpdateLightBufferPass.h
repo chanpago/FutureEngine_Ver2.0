@@ -50,7 +50,8 @@ public:
 
 private:
 	void NewBakeShadowMap(FRenderingContext& Context);
-	void BakeSpotShadowMap(FRenderingContext& Context);
+    void BakeSpotShadowMap(FRenderingContext& Context);
+    void BakePointShadowMap(FRenderingContext& Context);
 	
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
@@ -67,8 +68,13 @@ private:
 	ID3D11Buffer* LightCameraConstantBuffer = nullptr;
 	ID3D11Buffer* PSMConstantBuffer = nullptr;
 	// Spot shadow atlas structured buffer (per-spot view/proj + atlas transform)
-	ID3D11Buffer* SpotShadowAtlasStructuredBuffer = nullptr;
-	ID3D11ShaderResourceView* SpotShadowAtlasSRV = nullptr;
+    ID3D11Buffer* SpotShadowAtlasStructuredBuffer = nullptr;
+    ID3D11ShaderResourceView* SpotShadowAtlasSRV = nullptr;
+    // Point shadow: mapping from global point light index -> cube array index (or 0xFFFFFFFF if not shadowed)
+    ID3D11Buffer* PointShadowCubeIndexStructuredBuffer = nullptr;
+    ID3D11ShaderResourceView* PointShadowCubeIndexSRV = nullptr;
+public:
+    ID3D11ShaderResourceView* GetPointShadowCubeIndexSRV() const { return PointShadowCubeIndexSRV; }
 
 	// Shadow Map Viewports
 	D3D11_VIEWPORT DirectionalShadowViewport;

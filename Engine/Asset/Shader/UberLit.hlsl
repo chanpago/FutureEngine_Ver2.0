@@ -125,30 +125,6 @@ cbuffer ShadowMapConstants : register(b6)
     float2 pad;
 };
 
-// Single-spot shadow constants (for one caster)
-cbuffer SpotShadowConstants : register(b7)
-{
-    row_major float4x4 SpotLightView;
-    row_major float4x4 SpotLightProj;
-    float3 SpotPositionWS;
-    float SpotRange;
-    float3 SpotDirectionWS;
-    float SpotOuterCone;
-    float SpotInnerCone;
-    float2 SpotShadowMapSize;
-    float SpotShadowBias;
-    uint SpotUseVSM;
-    uint SpotUsePCF;
-    float SpotPadding;
-
-    // Atlas info for multi-spot shadows
-    float2 SpotAtlasTextureSize; // (AtlasW, AtlasH)
-    float2 SpotTileSize;         // (TileW, TileH)
-    uint   SpotAtlasCols;
-    uint   SpotAtlasRows;
-    float2 SpotAtlasPadding;
-};
-
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
@@ -165,6 +141,10 @@ struct FSpotShadowAtlasEntry
     float2 AtlasOffset;
 };
 StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
+
+// Point light shadow cube array and mapping (multiple point lights)
+TextureCubeArray PointShadowCubes : register(t14);
+StructuredBuffer<uint> PointShadowCubeIndices : register(t15);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -618,10 +598,6 @@ inline float CalculateShadowFactor(float3 WorldPosition)
 // Compute spotlight shadow factor from single-spot constants (b7/t12)
 float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
 {
-    // If constants not initialized or SRV not bound, skip sampling
-    if (SpotShadowMapSize.x <= 0.0f || SpotRange <= 0.0f)
-        return 1.0f;
-
     // Fetch per-spot view/proj and atlas transform
     FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
 
@@ -654,7 +630,7 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     float bias = 0.0001f;
 
     // PCF path (3x3) using hardware comparison sampler
-    if (SpotUsePCF != 0)
+    if (bUsePCF != 0)
     {
         float shadow = 0.0f;
         // One texel in atlas UV space
@@ -673,7 +649,7 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     }
 
     // VSM path using precomputed moments (R32G32_FLOAT)
-    if (SpotUseVSM != 0)
+    if (bUseVSM != 0)
     {
         // Sample moments without derivatives to allow dynamic loops
         float2 Moments = SpotShadowMapTexture.SampleLevel(SamplerLinearClamp, uvAtlas, 0).rg;
@@ -695,6 +671,40 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     // Default: binary comparison using regular sampler
     float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uvAtlas, 0).r;
     return (currentDepth - bias) > sd ? 0.0f : 1.0f;
+}
+
+// Compute point light shadow factor from cube array (no PCF/VSM, no bias)
+float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, float3 worldPos)
+{
+    // Map global point light index to cube array index; 0xFFFFFFFF means not shadowed
+    uint cubeIdx = PointShadowCubeIndices[pointIndex];
+    if (cubeIdx == 0xFFFFFFFFu)
+        return 1.0f;
+
+    float3 V = worldPos - info.Position;
+    float dist = length(V);
+    if (dist <= 1e-6f)
+        return 1.0f; // self
+    if (dist >= info.Range)
+        return 1.0f; // outside range → treat as lit (no shadow attenuation beyond range)
+
+    float3 dir = V / dist;
+    float3 a = abs(dir);
+    float3 F;
+    if (a.x >= a.y && a.x >= a.z) F = (dir.x > 0.0f) ? float3(1,0,0) : float3(-1,0,0);
+    else if (a.y >= a.z)          F = (dir.y > 0.0f) ? float3(0,1,0) : float3(0,-1,0);
+    else                          F = (dir.z > 0.0f) ? float3(0,0,1) : float3(0,0,-1);
+
+    // Reconstruct depth value used by the depth buffer for a 90° LH perspective with zn=0.1 and zf=info.Range
+    const float zn = 0.1f;
+    const float zf = max(zn + 1e-3f, info.Range);
+    float z_eye = max(dot(V, F), 1e-4f);
+    float C = zf / (zf - zn);
+    float D = -zn * zf / (zf - zn);
+    float currentDepth = C + D / z_eye;
+
+    float sd = PointShadowCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+    return (currentDepth - 0.0001f <= sd) ? 1.0f : 0.0f;
 }
 
 // Safe Normalize Util Functions
@@ -1021,8 +1031,13 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
     uint PointLightCount = GetPointLightCount(LightIndicesOffset);
     [loop] for (uint i = 0; i < PointLightCount ; i++)
     {
-        FPointLightInfo PointLight = GetPointLight(LightIndicesOffset + i);
-        ADD_ILLUM(Illumination, CalculatePointLight(PointLight, N, Input.WorldPosition, ViewWorldLocation));
+        uint PointIndex = PointLightIndices[LightIndicesOffset + i];
+        FPointLightInfo PointLight = PointLightInfos[PointIndex];
+        FIllumination P = CalculatePointLight(PointLight, N, Input.WorldPosition, ViewWorldLocation);
+        float pf = CalculatePointShadowFactorIndexed(PointIndex, PointLight, Input.WorldPosition);
+        P.Diffuse *= pf;
+        P.Specular *= pf;
+        ADD_ILLUM(Illumination, P);
     }
     
     // 4. Spot Lights

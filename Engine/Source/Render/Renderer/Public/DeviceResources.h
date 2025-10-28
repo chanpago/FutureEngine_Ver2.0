@@ -27,6 +27,8 @@ public:
 	void ReleaseShadowMapResources();
 	void CreateSpotShadowMapResources();
 	void ReleaseSpotShadowMapResources();
+	void CreatePointShadowCubeResources();
+	void ReleasePointShadowCubeResources();
 
 	// CSM Resources
 	void CreateCascadedShadowMap();
@@ -60,6 +62,11 @@ public:
     ID3D11ShaderResourceView* GetSpotShadowMapSRV() const { return SpotShadowMapSRV; }
     ID3D11RenderTargetView* GetSpotShadowMapColorRTV() const { return SpotShadowMapColorRTV; }
     ID3D11ShaderResourceView* GetSpotShadowMapColorSRV() const { return SpotShadowMapColorSRV; }
+
+	// Point Light Shadow Cube Getters
+	ID3D11ShaderResourceView* GetPointShadowCubeSRV() const { return PointShadowCubeSRV; }
+	ID3D11DepthStencilView* GetPointShadowCubeDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowCubeDSVs[SliceIndex] : nullptr; }
+	UINT GetMaxPointShadowLights() const { return MaxPointShadowLights; }
 
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
@@ -140,4 +147,11 @@ private:
 	// Direct2D/DirectWrite factories
 	ID2D1Factory* D2DFactory = nullptr;
 	IDWriteFactory* DWriteFactory = nullptr;
+
+	// Point Light Shadow Cube (TextureCubeArray depth)
+	static const UINT MaxPointShadowLights = 16; // capacity for shadowed point lights
+	ID3D11Texture2D* PointShadowCubeTexture = nullptr; // Array size = 6 * MaxPointShadowLights
+	ID3D11ShaderResourceView* PointShadowCubeSRV = nullptr; // SRV as TextureCubeArray
+	ID3D11DepthStencilView* PointShadowCubeDSVs[6 * MaxPointShadowLights] = { nullptr }; // DSV per face slice
+	UINT PointShadowCubeDSVsCount = 0;
 };
