@@ -125,6 +125,29 @@ cbuffer ShadowMapConstants : register(b6)
     float2 pad;
 };
 
+// Single-spot shadow constants (for one caster)
+cbuffer SpotShadowConstants : register(b7)
+{
+    row_major float4x4 SpotLightView;
+    row_major float4x4 SpotLightProj;
+    float3 SpotPositionWS;
+    float SpotRange;
+    float3 SpotDirectionWS;
+    float SpotOuterCone;
+    float SpotInnerCone;
+    float2 SpotShadowMapSize;
+    float SpotShadowBias;
+    uint SpotUseVSM;
+    uint SpotUsePCF;
+    float SpotPadding;
+
+    // Atlas info for multi-spot shadows
+    float2 SpotAtlasTextureSize; // (AtlasW, AtlasH)
+    float2 SpotTileSize;         // (TileW, TileH)
+    uint   SpotAtlasCols;
+    uint   SpotAtlasRows;
+    float2 SpotAtlasPadding;
+};
 
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
@@ -132,7 +155,16 @@ StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
 StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
 Texture2DArray CascadedShadowMapTexture : register(t11);
-
+Texture2D SpotShadowMapTexture : register(t12);
+// Per-spot atlas entry buffer (index aligns with SpotLightInfos index)
+struct FSpotShadowAtlasEntry
+{
+    row_major float4x4 View;
+    row_major float4x4 Proj;
+    float2 AtlasScale;
+    float2 AtlasOffset;
+};
+StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -302,7 +334,7 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
     // 최종 그림자 값 (1.0 = 빛, 0.0 = 그림자)
     float Shadow = 1.0f;
     
-    if (bUseCSM > 0.5f)  // CSM + VSM(?)
+    if (bUseCSM != 0)  // CSM + VSM(?)
     {
         int CascadeIndex = 0;
         if (ViewDepth > CascadeSplits.x)
@@ -350,7 +382,7 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
         // 현재 픽셀의 Light 공간 Depth
         float CurrentDepth = LightSpacePos.z;
         
-        if (bUseVSM < 0.5f)
+        if (bUseVSM == 0)
         {
             // Classic depth compare
             float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
@@ -448,7 +480,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
     
-    if (bUseCSM > 0.5f)
+    if (bUseCSM != 0)
     {
         int CascadeIndex = 0;
         if (ViewDepth > CascadeSplits.x)    CascadeIndex = 1;
@@ -473,14 +505,14 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
         return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
     }
-    else if ((bUseVSM < 0.5f && bUsePCF < 0.5f) || (bUseVSM > 0.5f && bUsePCF > 0.5f))
+    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
         float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
         float Shadow = (CurrentDepth - ShadowParams[0]) > ShadowMapDepth ? 0.0f : 1.0f;
         return Shadow;
     }
-    else if (bUsePCF > 0.5f)
+    else if (bUsePCF != 0)
     {
         // 3x3 PCF (Percentage-Closer Filtering)
         float Shadow = 0.0f;
@@ -507,7 +539,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         Shadow /= 9.0f;
         return Shadow;
     }
-    else if(bUseVSM > 0.5f)
+    else if(bUseVSM != 0)
     {
         // VSM: configurable smoothing via mip bias
         static const float VSM_MipBias = 1.25f; // Increase for softer shadows
@@ -538,6 +570,45 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
 inline float CalculateShadowFactor(float3 WorldPosition)
 {
     return PSM_Visibility(WorldPosition);
+}
+
+// Compute spotlight shadow factor from single-spot constants (b7/t12)
+float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
+{
+    // If constants not initialized or SRV not bound, skip sampling
+    if (SpotShadowMapSize.x <= 0.0f || SpotRange <= 0.0f)
+        return 1.0f;
+
+    // Fetch per-spot view/proj and atlas transform
+    FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
+
+    // Transform world position to spot light clip space
+    float4 clip = mul(float4(worldPos, 1.0f), entry.View);
+    clip = mul(clip, entry.Proj);
+    if (clip.w <= 0.0f)
+        return 1.0f; // behind the light frustum
+
+    float invW = rcp(clip.w);
+    float2 uv = float2(clip.x * invW, clip.y * invW) * 0.5f + 0.5f;
+    uv.y = 0.5f - (clip.y * invW) * 0.5f; // DirectX UV: flip Y
+
+    // Guard against bleeding by shrinking within the tile by ~1 texel
+    uint atlasW, atlasH;
+    SpotShadowMapTexture.GetDimensions(atlasW, atlasH);
+    float2 atlasTexel = 1.0 / float2(atlasW, atlasH);
+    float2 pad = atlasTexel * 1.5f; // tweakable inner padding in atlas UVs
+    float2 safeScale  = max(entry.AtlasScale - 2.0f * pad, float2(0.0f, 0.0f));
+    float2 safeOffset = entry.AtlasOffset + pad;
+    // Map local [0,1] UV into padded atlas rect
+    float2 uvAtlas = safeOffset + uv * safeScale;
+    if (uvAtlas.x < 0.0f || uvAtlas.x > 1.0f || uvAtlas.y < 0.0f || uvAtlas.y > 1.0f)
+        return 1.0f;
+
+    float currentDepth = saturate(clip.z * invW);
+    
+    // Use explicit LOD to avoid gradient use in dynamic loops
+    float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uvAtlas, 0).r;
+    return (currentDepth - 0.0001f) > sd ? 0.0f : 1.0f;
 }
 
 // Safe Normalize Util Functions
@@ -792,7 +863,7 @@ PS_INPUT Uber_VS(VS_INPUT Input)
 }
 
 // Pixel Shader
-PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
+PS_OUTPUT Uber_PS(PS_INPUT Input)
 {
     PS_OUTPUT Output;
     float4 finalPixel = float4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -870,10 +941,17 @@ PS_OUTPUT Uber_PS(PS_INPUT Input) : SV_TARGET
     
     // 4. Spot Lights
     uint SpotLightCount = GetSpotLightCount(LightIndicesOffset);
-     for (uint j = 0; j < SpotLightCount ; j++)
+    for (uint j = 0; j < SpotLightCount ; j++)
     {
-        FSpotLightInfo SpotLight = GetSpotLight(LightIndicesOffset + j);
-        ADD_ILLUM(Illumination, CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation));
+        // Fetch global index and info
+        uint SpotIndex = SpotLightIndices[LightIndicesOffset + j];
+        FSpotLightInfo SpotLight = SpotLightInfos[SpotIndex];
+        FIllumination S = CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation);
+        
+        float sf = CalculateSpotShadowFactorIndexed(SpotIndex, Input.WorldPosition);
+        S.Diffuse *= sf;
+        S.Specular *= sf;
+        ADD_ILLUM(Illumination, S);
     }
     
     finalPixel.rgb = Illumination.Ambient.rgb * ambientColor.rgb + Illumination.Diffuse.rgb * diffuseColor.rgb + Illumination.Specular.rgb * specularColor.rgb;

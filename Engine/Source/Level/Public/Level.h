@@ -74,7 +74,8 @@ private:
 		static_cast<uint64>(EEngineShowFlags::SF_StaticMesh) |
 		static_cast<uint64>(EEngineShowFlags::SF_Text) |
 		static_cast<uint64>(EEngineShowFlags::SF_Decal) |
-		static_cast<uint64>(EEngineShowFlags::SF_Fog);
+		static_cast<uint64>(EEngineShowFlags::SF_Fog) |
+		static_cast<uint64>(EEngineShowFlags::SF_Shadow);
 	
 	/*-----------------------------------------------------------------------------
 		Octree Management
@@ -122,6 +123,16 @@ private:
 public:
 	const TArray<ULightComponent*>& GetLightComponents() const { return LightComponents; } 
 
+	// Shadow Mode Getter/Setter
+	void SetShadowProjectionType(EShadowProjectionType InType) { ShadowProjectionType = InType; }
+	void SetShadowFilterType(EShadowFilterType InType) { ShadowFilterType = InType; }
+	EShadowProjectionType GetShadowProjectionType() const { return ShadowProjectionType; }
+	EShadowFilterType GetShadowFilterType() const { return ShadowFilterType; }
+
 private:
 	TArray<ULightComponent*> LightComponents;
+
+	// Shadow Rendering Mode
+	EShadowProjectionType ShadowProjectionType = EShadowProjectionType::Default;
+	EShadowFilterType ShadowFilterType = EShadowFilterType::None;
 };

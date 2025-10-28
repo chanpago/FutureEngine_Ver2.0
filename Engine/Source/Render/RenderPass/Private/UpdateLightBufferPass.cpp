@@ -48,6 +48,10 @@ FUpdateLightBufferPass::FUpdateLightBufferPass(UPipeline* InPipeline, ID3D11Buff
     PointShadowViewport.MaxDepth = 1.0f;
     PointShadowViewport.TopLeftX = 0.0f;
     PointShadowViewport.TopLeftY = 0.0f;
+
+    // Create structured buffer for spot shadow atlas entries
+    SpotShadowAtlasStructuredBuffer = FRenderResourceFactory::CreateStructuredBuffer<FSpotShadowAtlasEntry>(256);
+    FRenderResourceFactory::CreateStructuredShaderResourceView(SpotShadowAtlasStructuredBuffer, &SpotShadowAtlasSRV);
 }
 
 FUpdateLightBufferPass::~FUpdateLightBufferPass()
@@ -58,9 +62,233 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
 {
     // Context에 이미 수집된 Light 컴포넌트들을 사용
     // Shadow Map 베이킹 실행
-    BakeShadowMap(Context);
+    //BakeShadowMap(Context);
+    NewBakeShadowMap(Context);
+    BakeSpotShadowMap(Context);
 }
 
+void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
+{
+    // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+
+    // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
+    const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+    const EShadowFilterType FilterType = Context.ShadowFilterType;
+    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+
+    // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+    ID3D11RenderTargetView* OriginalRTVs = nullptr;     // Store the original Render Targets
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
+
+    // +-+-+ SET UP THE PIPELINE FOR SHADOW MAP RENDERING +-+-+
+    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
+    FPipelineInfo PipelineInfo = {
+        ShadowMapInputLayout,
+        ShadowMapVS,
+        RS,
+        URenderer::GetInstance().GetDefaultDepthStencilState(),
+        URenderer::GetInstance().GetPixelShader(FilterType),  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
+        nullptr,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    };
+    Pipeline->UpdatePipeline(PipelineInfo);
+
+    // +-+-+ GENERATE SHADOWS BASED ON THE PROJECTION METHOD +-+-+
+    FShadowCalculationData LightData;
+    CalculateShadowMatrices(ProjectionType, Context, LightData);
+
+    for (int Idx = 0; Idx < LightData.LightViews.size(); Idx++)
+    {
+        // Set render target
+        SetShadowRenderTarget(ProjectionType, FilterType, Idx);
+
+        // Update constant buffer (b6)
+        UpdateShadowCasterConstants(ProjectionType, LightData, Idx, Context);
+
+        // Render all objects in the scene.
+        for (auto MeshComp : Context.StaticMeshes)
+        {
+            if (!MeshComp || !MeshComp->IsVisible()) continue;
+            RenderPrimitive(MeshComp);
+        }
+    }
+
+    // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    DeviceContext->RSSetViewports(1, &OriginalViewport);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
+
+void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
+{
+    // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+
+    // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
+    const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+    const EShadowFilterType FilterType = Context.ShadowFilterType;
+    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+
+    // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(12, 1, &NullSRV);
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    ID3D11RenderTargetView* OriginalRTVs = nullptr;  
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
+
+    // +-+-+ SET UP THE PIPELINE FOR SHADOW MAP RENDERING +-+-+
+    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
+    FPipelineInfo PipelineInfo = {
+        ShadowMapInputLayout,
+        ShadowMapVS,
+        RS,
+        URenderer::GetInstance().GetDefaultDepthStencilState(),
+        URenderer::GetInstance().GetPixelShader(FilterType),  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
+        nullptr,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    };
+    Pipeline->UpdatePipeline(PipelineInfo);
+
+
+    // +-+-+ BAKE SPOTLIGHT SHADOW MAP (atlas for multiple casters) +-+-+
+    // Build filtered spot list matching LightPass ordering (visible + enabled)
+    TArray<USpotLightComponent*> FilteredSpots;
+    for (auto* SL : Context.SpotLights)
+    {
+        // TODO: also check SL->GetCastShadows()
+        if (SL && SL->GetVisible() && SL->GetLightEnabled())
+        {
+            FilteredSpots.push_back(SL);
+        }
+    }
+    const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
+    if (NumSpotLights > 0)
+    {
+        ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
+        DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+        // Clear entire atlas once
+        DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+        // Prepare atlas math
+        const float tileW = SpotShadowViewport.Width;
+        const float tileH = SpotShadowViewport.Height;
+        const float atlasW = tileW * static_cast<float>(SpotAtlasCols);
+        const float atlasH = tileH * static_cast<float>(SpotAtlasRows);
+
+        // Build entries to upload to structured buffer (index by global spot index)
+        TArray<FSpotShadowAtlasEntry> Entries;
+        Entries.resize(NumSpotLights);
+
+        // Render each spot into its atlas tile
+        for (int32 idx = 0; idx < NumSpotLights; ++idx)
+        {
+            USpotLightComponent* SpotCaster = FilteredSpots[idx];
+            if (!SpotCaster) { continue; }
+
+            // Compute view matrix from light basis
+            const FVector eye = SpotCaster->GetWorldLocation();
+            const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
+            const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+            const FVector right = tmpUp.Cross(fwd).GetNormalized();
+            const FVector up = fwd.Cross(right);
+
+            FMatrix V = FMatrix::Identity();
+            V.Data[0][0]=right.X; V.Data[0][1]=up.X; V.Data[0][2]=fwd.X;
+            V.Data[1][0]=right.Y; V.Data[1][1]=up.Y; V.Data[1][2]=fwd.Y;
+            V.Data[2][0]=right.Z; V.Data[2][1]=up.Z; V.Data[2][2]=fwd.Z;
+            V.Data[3][0]= -eye.Dot(right);
+            V.Data[3][1]= -eye.Dot(up);
+            V.Data[3][2]= -eye.Dot(fwd);
+
+            // Perspective projection (row-vector LH)
+            const float fov = std::max(0.001f, SpotCaster->GetOuterConeAngle()) * 2.0f;
+            const float aspect = 1.0f;
+            const float zn = 0.1f;
+            const float zf = std::max(zn + 0.1f, SpotCaster->GetAttenuationRadius());
+            FMatrix P = FMatrix::Identity();
+            const float yScale = 1.0f / tanf(fov * 0.5f);
+            const float xScale = yScale / aspect;
+            P.Data[0][0] = xScale;
+            P.Data[1][1] = yScale;
+            P.Data[2][2] = zf / (zf - zn);
+            P.Data[3][2] = -zn * zf / (zf - zn);
+            P.Data[2][3] = 1.0f;
+            P.Data[3][3] = 0.0f;
+
+            // Update constant buffer used by shadow depth pass (b6 VS)
+            FShadowMapConstants SpotCasterConsts = {};
+            SpotCasterConsts.LightViewP[0] = V;
+            SpotCasterConsts.LightProjP[0] = P;
+            SpotCasterConsts.LightViewPInv[0] = V.Inverse();
+            SpotCasterConsts.ShadowMapSize = FVector2(tileW, tileH);
+            SpotCasterConsts.ShadowParams = FVector4(0.0008f, 0, 0, 0);
+            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, SpotCasterConsts);
+
+            // Calculate atlas tile viewport
+            const uint32 tileX = static_cast<uint32>(idx % SpotAtlasCols);
+            const uint32 tileY = static_cast<uint32>(idx / SpotAtlasCols);
+            D3D11_VIEWPORT vp = SpotShadowViewport;
+            vp.TopLeftX = tileW * static_cast<float>(tileX);
+            vp.TopLeftY = tileH * static_cast<float>(tileY);
+            DeviceContext->RSSetViewports(1, &vp);
+
+            // Render scene from this spot light POV into its tile
+            for (auto MeshComp : Context.StaticMeshes)
+            {
+                if (!MeshComp || !MeshComp->IsVisible()) continue;
+                RenderPrimitive(MeshComp);
+            }
+
+            // First one cached for backwards compatibility (used by StaticMeshPass)
+            if (idx == 0)
+            {
+                SpotLightView = V;
+                SpotLightProj = P;
+            }
+
+            // Compute atlas transform with 1 texel inner padding to avoid bleeding
+            const float sx = tileW / atlasW;
+            const float sy = tileH / atlasH;
+            const float ox = (tileW * tileX) / atlasW;
+            const float oy = (tileH * tileY) / atlasH;
+            const float padU = 1.5f / atlasW; // ~1.5 texels
+            const float padV = 1.5f / atlasH;
+
+            FSpotShadowAtlasEntry entry;
+            entry.View = V;
+            entry.Proj = P;
+            entry.AtlasScale = FVector2(std::max(0.0f, sx - 2.0f * padU), std::max(0.0f, sy - 2.0f * padV));
+            entry.AtlasOffset = FVector2(ox + padU, oy + padV);
+            // Write at the same index used by clustered lighting for this spotlight
+            Entries[idx] = entry;
+        }
+
+        // Upload entries to GPU structured buffer
+        if (SpotShadowAtlasStructuredBuffer)
+        {
+            FRenderResourceFactory::UpdateStructuredBuffer(SpotShadowAtlasStructuredBuffer, Entries);
+        }
+    }
+    
+    // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    DeviceContext->RSSetViewports(1, &OriginalViewport);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
 
 void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
 {
@@ -90,70 +318,70 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     const bool bUseCSM = (Context.ShowFlags & EEngineShowFlags::SF_CSM) != 0;
     if (bUseCSM)
     {
-        UE_LOG("CSM Path Enabled: Generate Cascaded Shadow Maps.");
+        //UE_LOG("CSM Path Enabled: Generate Cascaded Shadow Maps.");
 
-        const UCamera* Camera = Context.CurrentCamera;
-        if (!Camera) return;
+        //const UCamera* Camera = Context.CurrentCamera;
+        //if (!Camera) return;
 
-        UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
-        if (!Light) return;
+        //UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
+        //if (!Light) return;
 
         CascadedShadowMapConstants = {};
-        CalculateCascadeSplits(CascadedShadowMapConstants.CascadeSplits, Camera);
+        //CalculateCascadeSplits(CascadedShadowMapConstants.CascadeSplits, Camera);
 
-        const float* pSplits = &CascadedShadowMapConstants.CascadeSplits.X;
+        //const float* pSplits = &CascadedShadowMapConstants.CascadeSplits.X;
         DeviceContext->RSSetViewports(1, &DirectionalShadowViewport);
 
         for (int i = 0; i < MAX_CASCADES; i++)
         {
-            ID3D11DepthStencilView* CurrentDsv = Renderer.GetInstance().GetDeviceResources()->GetCascadedShadowMapDSV(i);
+            /*ID3D11DepthStencilView* CurrentDsv = Renderer.GetInstance().GetDeviceResources()->GetCascadedShadowMapDSV(i);
             DeviceContext->OMSetRenderTargets(0, nullptr, CurrentDsv);
-            DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);*/
 
-            // Calculate current cascade slices' corner
-            float NearSplit = (i == 0) ? Camera->GetNearZ() : pSplits[i - 1];
-            float FarSplit = pSplits[i];
-            FVector FrustumCorners[8];
-            Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
+            //// Calculate current cascade slices' corner
+            //float NearSplit = (i == 0) ? Camera->GetNearZ() : pSplits[i - 1];
+            //float FarSplit = pSplits[i];
+            //FVector FrustumCorners[8];
+            //Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
 
-            // Calculate the center of cascade slice
-            FVector FrustumCenter = FVector::ZeroVector();
-            for (int j = 0; j < 8; j++)
-            {
-                FrustumCenter += FrustumCorners[j];
-            }
-            FrustumCenter /= 8.0f;
+            //// Calculate the center of cascade slice
+            //FVector FrustumCenter = FVector::ZeroVector();
+            //for (int j = 0; j < 8; j++)
+            //{
+            //    FrustumCenter += FrustumCorners[j];
+            //}
+            //FrustumCenter /= 8.0f;
 
             // Calculate the light's View matrix based on the frustum's center point 
-            FMatrix LightViewMatrix;
-            {
-                // Set light position
-                FVector LightDir = Light->GetForwardVector().GetNormalized();
-                float ShadowDistance = 250.0f;
-                /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
-                float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
-                FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
+            //FMatrix LightViewMatrix;
+            //{
+            //    // Set light position
+            //    FVector LightDir = Light->GetForwardVector().GetNormalized();
+            //    float ShadowDistance = 250.0f;
+            //    /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
+            //    float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
+            //    FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
 
-                // light source targets the center of slice
-                FVector TargetPos = FrustumCenter;
-                FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
+            //    // light source targets the center of slice
+            //    FVector TargetPos = FrustumCenter;
+            //    FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
 
-                // LookAt matrix
-                FVector ZAxis = (TargetPos - LightPos).GetNormalized();
-                FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
-                FVector YAxis = ZAxis.Cross(XAxis);
+            //    // LookAt matrix
+            //    FVector ZAxis = (TargetPos - LightPos).GetNormalized();
+            //    FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
+            //    FVector YAxis = ZAxis.Cross(XAxis);
 
-                LightViewMatrix = FMatrix::Identity();
-                LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
-                LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
-                LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
-                LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
-                LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
-                LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
-            }
+            //    LightViewMatrix = FMatrix::Identity();
+            //    LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
+            //    LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
+            //    LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
+            //    LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
+            //    LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
+            //    LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
+            //}
 
-            // Calculate a tight Projection matrix
-            FMatrix CascadeLightProj;
+            //// Calculate a tight Projection matrix
+            /*FMatrix CascadeLightProj;
             {
                 FVector FrustumCornersLightView[8];
                 for (int j = 0; j < 8; j++)
@@ -180,14 +408,14 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                 CascadeLightProj.Data[3][0] = -(MaxVec.X + MinVec.X) / (MaxVec.X - MinVec.X);
                 CascadeLightProj.Data[3][1] = -(MaxVec.Y + MinVec.Y) / (MaxVec.Y - MinVec.Y);
                 CascadeLightProj.Data[3][2] = -MinVec.Z / (MaxVec.Z - MinVec.Z);
-            }
-            CascadedShadowMapConstants.LightViewP[i] = LightViewMatrix;
-            CascadedShadowMapConstants.LightProjP[i] = CascadeLightProj;
+            }*/
+            //CascadedShadowMapConstants.LightViewP[i] = LightViewMatrix;
+            //CascadedShadowMapConstants.LightProjP[i] = CascadeLightProj;
 
-            FCameraConstants LightCameraConsts;
+            /*FCameraConstants LightCameraConsts;
             LightCameraConsts.View = LightViewMatrix;
             LightCameraConsts.Projection = CascadeLightProj;
-            FRenderResourceFactory::UpdateConstantBufferData(LightCameraConstantBuffer, LightCameraConsts);
+            FRenderResourceFactory::UpdateConstantBufferData(LightCameraConstantBuffer, LightCameraConsts);*/
 
             for (auto MeshComp : Context.StaticMeshes)
             {
@@ -201,26 +429,26 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
         // Directional Light Shadow Map 렌더링
         for (auto Light : Context.DirectionalLights)
         {
-            if (!Light)
-            {
-                continue;
-            }
+            //if (!Light)
+            //{
+            //    continue;
+            //}
         
-            // === LVP용: 월드 전체 AABB 집계 (카메라에 독립)
-            FVector SceneMin(+FLT_MAX, +FLT_MAX, +FLT_MAX);
-            FVector SceneMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-            for (auto MeshComp : Context.StaticMeshes)
-            {
-                if (!MeshComp || !MeshComp->IsVisible()) continue;
-                FVector aabbMin, aabbMax;
-                MeshComp->GetWorldAABB(aabbMin, aabbMax);
-                SceneMin.X = std::min(SceneMin.X, aabbMin.X);
-                SceneMin.Y = std::min(SceneMin.Y, aabbMin.Y);
-                SceneMin.Z = std::min(SceneMin.Z, aabbMin.Z);
-                SceneMax.X = std::max(SceneMax.X, aabbMax.X);
-                SceneMax.Y = std::max(SceneMax.Y, aabbMax.Y);
-                SceneMax.Z = std::max(SceneMax.Z, aabbMax.Z);
-            }
+            //// === LVP용: 월드 전체 AABB 집계 (카메라에 독립)
+            //FVector SceneMin(+FLT_MAX, +FLT_MAX, +FLT_MAX);
+            //FVector SceneMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+            //for (auto MeshComp : Context.StaticMeshes)
+            //{
+            //    if (!MeshComp || !MeshComp->IsVisible()) continue;
+            //    FVector aabbMin, aabbMax;
+            //    MeshComp->GetWorldAABB(aabbMin, aabbMax);
+            //    SceneMin.X = std::min(SceneMin.X, aabbMin.X);
+            //    SceneMin.Y = std::min(SceneMin.Y, aabbMin.Y);
+            //    SceneMin.Z = std::min(SceneMin.Z, aabbMin.Z);
+            //    SceneMax.X = std::max(SceneMax.X, aabbMax.X);
+            //    SceneMax.Y = std::max(SceneMax.Y, aabbMax.Y);
+            //    SceneMax.Z = std::max(SceneMax.Z, aabbMax.Z);
+            //}
             //UE_LOG_INFO("[LVP] World AABB Min(%.2f, %.2f, %.2f) Max(%.2f, %.2f, %.2f)", SceneMin.X, SceneMin.Y, SceneMin.Z, SceneMax.X, SceneMax.Y, SceneMax.Z);
         
             // Shadow Map DSV 설정 및 클리어
@@ -249,17 +477,17 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
             float FovY = MainCamera->GetFovY();
             float Aspect = MainCamera->GetAspect();
 
-            // === Simple Ortho Shadow ===
-            FVector LightPosition = (SceneMin + SceneMax) / 2.0f;
-            LightPosition.Z += 200.0f;
-            
-            // Directional Light의 fwd만으로 정규 직교 기저 구성
-            FVector LightFwd = Light->GetForwardVector();
-            FVector LightUp = (fabsf(LightFwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
-            FVector LightRight = LightUp.Cross(LightFwd).GetNormalized();
-            LightUp = LightFwd.Cross(LightRight);
+            //// === Simple Ortho Shadow ===
+            //FVector LightPosition = (SceneMin + SceneMax) / 2.0f;
+            //LightPosition.Z += 200.0f;
+            //
+            //// Directional Light의 fwd만으로 정규 직교 기저 구성
+            //FVector LightFwd = Light->GetForwardVector();
+            //FVector LightUp = (fabsf(LightFwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+            //FVector LightRight = LightUp.Cross(LightFwd).GetNormalized();
+            //LightUp = LightFwd.Cross(LightRight);
         
-            FMatrix LightView = FMatrix::Identity();
+            /*FMatrix LightView = FMatrix::Identity();
             LightView.Data[0][0] = LightRight.X; LightView.Data[0][1] = LightUp.X; LightView.Data[0][2] = LightFwd.X;
             LightView.Data[1][0] = LightRight.Y; LightView.Data[1][1] = LightUp.Y; LightView.Data[1][2] = LightFwd.Y;
             LightView.Data[2][0] = LightRight.Z; LightView.Data[2][1] = LightUp.Z; LightView.Data[2][2] = LightFwd.Z;
@@ -282,43 +510,43 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                 FVector4 lv = FMatrix::VectorMultiply(FVector4(Corners[i], 1), LightView);
                 oMinX = std::min(oMinX, lv.X); oMinY = std::min(oMinY, lv.Y); oMinZ = std::min(oMinZ, lv.Z);
                 oMaxX = std::max(oMaxX, lv.X); oMaxY = std::max(oMaxY, lv.Y); oMaxZ = std::max(oMaxZ, lv.Z);
-            }
+            }*/
             
-            // row-vector Ortho LH
-            auto OrthoRowLH = [](float l,float r,float b,float t,float zn,float zf){
-                FMatrix M = FMatrix::Identity();
-                M.Data[0][0] =  2.0f/(r-l);
-                M.Data[1][1] =  2.0f/(t-b);
-                M.Data[2][2] =  1.0f/(zf-zn);
-                M.Data[3][0] =  (l+r)/(l-r);
-                M.Data[3][1] =  (t+b)/(b-t);
-                M.Data[3][2] =  -zn/(zf-zn);
-                return M;
-            };
-            
-            // ★ LVP에도 Texel Snapping 적용
-            // World AABB 중심을 light view space에서 texel grid에 정렬
-            float worldUnitsPerTexelX = (oMaxX - oMinX) / DirectionalShadowViewport.Width;
-            float worldUnitsPerTexelY = (oMaxY - oMinY) / DirectionalShadowViewport.Height;
+            //// row-vector Ortho LH
+            //auto OrthoRowLH = [](float l,float r,float b,float t,float zn,float zf){
+            //    FMatrix M = FMatrix::Identity();
+            //    M.Data[0][0] =  2.0f/(r-l);
+            //    M.Data[1][1] =  2.0f/(t-b);
+            //    M.Data[2][2] =  1.0f/(zf-zn);
+            //    M.Data[3][0] =  (l+r)/(l-r);
+            //    M.Data[3][1] =  (t+b)/(b-t);
+            //    M.Data[3][2] =  -zn/(zf-zn);
+            //    return M;
+            //};
+            //
+            //// ★ LVP에도 Texel Snapping 적용
+            //// World AABB 중심을 light view space에서 texel grid에 정렬
+            //float worldUnitsPerTexelX = (oMaxX - oMinX) / DirectionalShadowViewport.Width;
+            //float worldUnitsPerTexelY = (oMaxY - oMinY) / DirectionalShadowViewport.Height;
 
-            // World AABB 중심을 light view space로 변환
-            FVector worldCenter = (SceneMin + SceneMax) * 0.5f;
-            FVector4 centerInLightView = FMatrix::VectorMultiply(FVector4(worldCenter, 1.0f), LightView);
+            //// World AABB 중심을 light view space로 변환
+            //FVector worldCenter = (SceneMin + SceneMax) * 0.5f;
+            //FVector4 centerInLightView = FMatrix::VectorMultiply(FVector4(worldCenter, 1.0f), LightView);
 
-            // Texel grid에 snap
-            float snappedCenterX = floor(centerInLightView.X / worldUnitsPerTexelX) * worldUnitsPerTexelX;
-            float snappedCenterY = floor(centerInLightView.Y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
+            //// Texel grid에 snap
+            //float snappedCenterX = floor(centerInLightView.X / worldUnitsPerTexelX) * worldUnitsPerTexelX;
+            //float snappedCenterY = floor(centerInLightView.Y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
 
-            // Offset 계산 및 적용
-            float offsetX = snappedCenterX - centerInLightView.X;
-            float offsetY = snappedCenterY - centerInLightView.Y;
+            //// Offset 계산 및 적용
+            //float offsetX = snappedCenterX - centerInLightView.X;
+            //float offsetY = snappedCenterY - centerInLightView.Y;
 
-            oMinX += offsetX;
-            oMaxX += offsetX;
-            oMinY += offsetY;
-            oMaxY += offsetY;
+            //oMinX += offsetX;
+            //oMaxX += offsetX;
+            //oMinY += offsetY;
+            //oMaxY += offsetY;
 
-            FMatrix LightProj = OrthoRowLH(oMinX, oMaxX, oMinY, oMaxY, oMinZ, oMaxZ);
+            //FMatrix LightProj = OrthoRowLH(oMinX, oMaxX, oMinY, oMaxY, oMinZ, oMaxZ);
 
 
             // === 헬퍼 ===
@@ -356,7 +584,17 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                 return M;
             };
         
-        
+            // row-vector Ortho LH
+            auto OrthoRowLH = [](float l, float r, float b, float t, float zn, float zf) {
+                FMatrix M = FMatrix::Identity();
+                M.Data[0][0] = 2.0f / (r - l);
+                M.Data[1][1] = 2.0f / (t - b);
+                M.Data[2][2] = 1.0f / (zf - zn);
+                M.Data[3][0] = (l + r) / (l - r);
+                M.Data[3][1] = (t + b) / (b - t);
+                M.Data[3][2] = -zn / (zf - zn);
+                return M;
+                };
         
             // (1) 현재 프레임 수신자들의 NDC 박스 구하기
             auto ComputeReceiverNDCBox = [&](FVector& ndcMin, FVector& ndcMax)
@@ -510,7 +748,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                 InOutB += offsetY;
                 InOutT += offsetY;
             };
-        
+            
             // bCastShadows에 따라 분기
             // === LVP (Shadow Maps) ===
             if (!Light->GetCastShadows())
@@ -519,32 +757,32 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                 // ★ Texel Snapping은 이미 위(line 182-204)에서 적용됨
 
                 FShadowMapConstants LVPShadowMap;
-                LVPShadowMap.EyeView   = FMatrix::Identity();
-                LVPShadowMap.EyeProj   = FMatrix::Identity();
-                LVPShadowMap.EyeViewProjInv  = FMatrix::Identity(); // LVP에선 안 씀
+                //LVPShadowMap.EyeView   = FMatrix::Identity();
+                //LVPShadowMap.EyeProj   = FMatrix::Identity();
+                //LVPShadowMap.EyeViewProjInv  = FMatrix::Identity(); // LVP에선 안 씀
 
-                LVPShadowMap.LightViewP[0] = LightView;
-                LVPShadowMap.LightProjP[0] = LightProj;
-                LVPShadowMap.LightViewPInv[0] = LightView.Inverse(); // L_texel 계산에 안 쓰지만 채워두면 안전
+                //LVPShadowMap.LightViewP[0] = LightView;
+                //LVPShadowMap.LightProjP[0] = LightProj;
+                //LVPShadowMap.LightViewPInv[0] = LightView.Inverse(); // L_texel 계산에 안 쓰지만 채워두면 안전
 
-                LVPShadowMap.ShadowParams = FVector4(0.002f, 0, 0, 0);
+                //LVPShadowMap.ShadowParams = FVector4(0.002f, 0, 0, 0);
 
-                LVPShadowMap.LightDirWS      = (-Light->GetForwardVector()).GetNormalized();
-                LVPShadowMap.bInvertedLight = 0;
+                //LVPShadowMap.LightDirWS      = (-Light->GetForwardVector()).GetNormalized();
+                //LVPShadowMap.bInvertedLight = 0;
 
-                // 오쏘 경계(l,r,b,t)와 섀도맵 해상도
-                LVPShadowMap.LightOrthoParams= FVector4(oMinX, oMaxX, oMinY, oMaxY);
-                LVPShadowMap.ShadowMapSize   = FVector2(DirectionalShadowViewport.Width, DirectionalShadowViewport.Height);
+                //// 오쏘 경계(l,r,b,t)와 섀도맵 해상도
+                //LVPShadowMap.LightOrthoParams= FVector4(oMinX, oMaxX, oMinY, oMaxY);
+                //LVPShadowMap.ShadowMapSize   = FVector2(DirectionalShadowViewport.Width, DirectionalShadowViewport.Height);
 
-                LVPShadowMap.bUsePSM = 0;
-                FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, LVPShadowMap);
+                //LVPShadowMap.bUsePSM = 0;
+                //FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, LVPShadowMap);
 
-                LightViewP = LightView;
-                LightProjP = LightProj;
-                CachedEyeView = FMatrix::Identity();
-                CachedEyeProj = FMatrix::Identity();
+                //LightViewP = LightView;
+                //LightProjP = LightProj;
+                //CachedEyeView = FMatrix::Identity();
+                //CachedEyeProj = FMatrix::Identity();
 
-                LightOrthoLTRB = FVector4(oMinX, oMaxX, oMinY, oMaxY);
+                //LightOrthoLTRB = FVector4(oMinX, oMaxX, oMinY, oMaxY);
             }
             else
             {
@@ -670,29 +908,13 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
     //if (OriginalDSV) OriginalDSV->Release();
 }
 
-
 void FUpdateLightBufferPass::RenderPrimitive(UStaticMeshComponent* MeshComp)
 {
     if (!MeshComp || !MeshComp->GetStaticMesh()) return;
 
     FStaticMesh* MeshAsset = MeshComp->GetStaticMesh()->GetStaticMeshAsset();
     if (!MeshAsset) return;
-
-    // Shadow Map 렌더링용 파이프라인 설정
-    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState(
-        { ECullMode::None, EFillMode::Solid });
     
-    FPipelineInfo PipelineInfo = {
-        ShadowMapInputLayout,
-        ShadowMapVS,
-        RS,
-        URenderer::GetInstance().GetDefaultDepthStencilState(),
-        ShadowMapPS,  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
-        nullptr,
-        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
-    };
-    
-    Pipeline->UpdatePipeline(PipelineInfo);
     Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
     Pipeline->SetConstantBuffer(6, EShaderType::VS, PSMConstantBuffer);  // Light 전용 버퍼 사용
 
@@ -708,6 +930,297 @@ void FUpdateLightBufferPass::RenderPrimitive(UStaticMeshComponent* MeshComp)
     {
         Pipeline->DrawIndexed(Section.IndexCount, Section.StartIndex, 0);
     }
+}
+
+void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjType, FRenderingContext& Context, FShadowCalculationData& OutShadowData)
+{
+    OutShadowData.LightViews.clear();
+    OutShadowData.LightProjs.clear();
+
+    UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
+    if (!Light) return;
+
+    switch (ProjType)
+    {
+    case EShadowProjectionType::Default:
+    {
+        // === LVP용: 월드 전체 AABB 집계 (카메라에 독립)
+        FVector SceneMin(+FLT_MAX, +FLT_MAX, +FLT_MAX);
+        FVector SceneMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+        for (auto MeshComp : Context.StaticMeshes)
+        {
+            if (!MeshComp || !MeshComp->IsVisible()) continue;
+            FVector aabbMin, aabbMax;
+            MeshComp->GetWorldAABB(aabbMin, aabbMax);
+            SceneMin.X = std::min(SceneMin.X, aabbMin.X);
+            SceneMin.Y = std::min(SceneMin.Y, aabbMin.Y);
+            SceneMin.Z = std::min(SceneMin.Z, aabbMin.Z);
+            SceneMax.X = std::max(SceneMax.X, aabbMax.X);
+            SceneMax.Y = std::max(SceneMax.Y, aabbMax.Y);
+            SceneMax.Z = std::max(SceneMax.Z, aabbMax.Z);
+        }
+        //UE_LOG_INFO("[LVP] World AABB Min(%.2f, %.2f, %.2f) Max(%.2f, %.2f, %.2f)", SceneMin.X, SceneMin.Y, SceneMin.Z, SceneMax.X, SceneMax.Y, SceneMax.Z);
+
+        // === Simple Ortho Shadow ===
+        FVector LightPosition = (SceneMin + SceneMax) / 2.0f;
+        LightPosition.Z += 200.0f;
+
+        // Directional Light의 fwd만으로 정규 직교 기저 구성
+        FVector LightFwd = Light->GetForwardVector();
+        FVector LightUp = (fabsf(LightFwd.Z) > 0.99f) ? FVector(1, 0, 0) : FVector(0, 0, 1);
+        FVector LightRight = LightUp.Cross(LightFwd).GetNormalized();
+        LightUp = LightFwd.Cross(LightRight);
+
+        FMatrix LightView = FMatrix::Identity();
+        LightView.Data[0][0] = LightRight.X; LightView.Data[0][1] = LightUp.X; LightView.Data[0][2] = LightFwd.X;
+        LightView.Data[1][0] = LightRight.Y; LightView.Data[1][1] = LightUp.Y; LightView.Data[1][2] = LightFwd.Y;
+        LightView.Data[2][0] = LightRight.Z; LightView.Data[2][1] = LightUp.Z; LightView.Data[2][2] = LightFwd.Z;
+        LightView.Data[3][0] = -LightPosition.Dot(LightRight);
+        LightView.Data[3][1] = -LightPosition.Dot(LightUp);
+        LightView.Data[3][2] = -LightPosition.Dot(LightFwd);
+        LightView.Data[3][3] = 1.0f;
+
+        float oMinX = +FLT_MAX, oMinY = +FLT_MAX, oMinZ = +FLT_MAX;
+        float oMaxX = -FLT_MAX, oMaxY = -FLT_MAX, oMaxZ = -FLT_MAX;
+        FVector Corners[8] =
+        {
+            {SceneMin.X, SceneMin.Y, SceneMin.Z}, {SceneMax.X, SceneMin.Y, SceneMin.Z},
+            {SceneMin.X, SceneMax.Y, SceneMin.Z}, {SceneMax.X, SceneMax.Y, SceneMin.Z},
+            {SceneMin.X, SceneMin.Y, SceneMax.Z}, {SceneMax.X, SceneMin.Y, SceneMax.Z},
+            {SceneMin.X, SceneMax.Y, SceneMax.Z}, {SceneMax.X, SceneMax.Y, SceneMax.Z}
+        };
+        for (int i = 0; i < 8; ++i)
+        {
+            FVector4 lv = FMatrix::VectorMultiply(FVector4(Corners[i], 1), LightView);
+            oMinX = std::min(oMinX, lv.X); oMinY = std::min(oMinY, lv.Y); oMinZ = std::min(oMinZ, lv.Z);
+            oMaxX = std::max(oMaxX, lv.X); oMaxY = std::max(oMaxY, lv.Y); oMaxZ = std::max(oMaxZ, lv.Z);
+        }
+
+        // row-vector Ortho LH
+        auto OrthoRowLH = [](float l, float r, float b, float t, float zn, float zf) {
+            FMatrix M = FMatrix::Identity();
+            M.Data[0][0] = 2.0f / (r - l);
+            M.Data[1][1] = 2.0f / (t - b);
+            M.Data[2][2] = 1.0f / (zf - zn);
+            M.Data[3][0] = (l + r) / (l - r);
+            M.Data[3][1] = (t + b) / (b - t);
+            M.Data[3][2] = -zn / (zf - zn);
+            return M;
+        };
+
+        // ★ LVP에도 Texel Snapping 적용
+        // World AABB 중심을 light view space에서 texel grid에 정렬
+        float worldUnitsPerTexelX = (oMaxX - oMinX) / DirectionalShadowViewport.Width;
+        float worldUnitsPerTexelY = (oMaxY - oMinY) / DirectionalShadowViewport.Height;
+
+        // World AABB 중심을 light view space로 변환
+        FVector worldCenter = (SceneMin + SceneMax) * 0.5f;
+        FVector4 centerInLightView = FMatrix::VectorMultiply(FVector4(worldCenter, 1.0f), LightView);
+
+        // Texel grid에 snap
+        float snappedCenterX = floor(centerInLightView.X / worldUnitsPerTexelX) * worldUnitsPerTexelX;
+        float snappedCenterY = floor(centerInLightView.Y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
+
+        // Offset 계산 및 적용
+        float offsetX = snappedCenterX - centerInLightView.X;
+        float offsetY = snappedCenterY - centerInLightView.Y;
+
+        oMinX += offsetX;
+        oMaxX += offsetX;
+        oMinY += offsetY;
+        oMaxY += offsetY;
+
+        FMatrix LightProj = OrthoRowLH(oMinX, oMaxX, oMinY, oMaxY, oMinZ, oMaxZ);
+
+        OutShadowData.LightOrthoParams = FVector4(oMinX, oMaxX, oMinY, oMaxY);
+        OutShadowData.LightViews.push_back(LightView);
+        OutShadowData.LightProjs.push_back(LightProj);
+
+        LightViewP = LightView;
+        LightProjP = LightProj;
+        CachedEyeView = FMatrix::Identity();
+        CachedEyeProj = FMatrix::Identity();
+        LightOrthoLTRB = FVector4(oMinX, oMaxX, oMinY, oMaxY);
+        
+        break;
+    }
+    case EShadowProjectionType::PSM:
+        break;
+    case EShadowProjectionType::CSM:
+    {
+        const UCamera* Camera = Context.CurrentCamera;
+        if (!Camera) return;
+
+        CalculateCascadeSplits(OutShadowData.CascadeSplits, Camera);
+        const float* pSplits = &OutShadowData.CascadeSplits.X;
+
+        for (int i = 0; i < MAX_CASCADES; i++)
+        {
+            // Calculate current cascade slices' corner
+            float NearSplit = (i == 0) ? Camera->GetNearZ() : pSplits[i - 1];
+            float FarSplit = pSplits[i];
+            FVector FrustumCorners[8];
+            Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
+
+            // Calculate the center of cascade slice
+            FVector FrustumCenter = FVector::ZeroVector();
+            for (int j = 0; j < 8; j++)
+            {
+                FrustumCenter += FrustumCorners[j];
+            }
+            FrustumCenter /= 8.0f;
+
+            // Calculate the light's View matrix based on the frustum's center point 
+            FMatrix LightViewMatrix;
+            {
+                // Set light position
+                FVector LightDir = Light->GetForwardVector().GetNormalized();
+                float ShadowDistance = 200.0f;
+                /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
+                float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
+                FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
+
+                // light source targets the center of slice
+                FVector TargetPos = FrustumCenter;
+                FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
+
+                // LookAt matrix
+                FVector ZAxis = (TargetPos - LightPos).GetNormalized();
+                FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
+                FVector YAxis = ZAxis.Cross(XAxis);
+
+                LightViewMatrix = FMatrix::Identity();
+                LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
+                LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
+                LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
+                LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
+                LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
+                LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
+            }
+
+            // Calculate a tight Projection matrix
+            FMatrix CascadeLightProj;
+            {
+                FVector FrustumCornersLightView[8];
+                for (int j = 0; j < 8; j++)
+                {
+                    FrustumCornersLightView[j] = FVector4(FrustumCorners[j], 1.0f) * LightViewMatrix;
+                }
+
+                FVector MinVec = FrustumCornersLightView[0];
+                FVector MaxVec = FrustumCornersLightView[0];
+                for (int j = 0; j < 8; j++)
+                {
+                    MinVec.X = std::min(MinVec.X, FrustumCornersLightView[j].X);
+                    MinVec.Y = std::min(MinVec.Y, FrustumCornersLightView[j].Y);
+                    MinVec.Z = std::min(MinVec.Z, FrustumCornersLightView[j].Z);
+                    MaxVec.X = std::max(MaxVec.X, FrustumCornersLightView[j].X);
+                    MaxVec.Y = std::max(MaxVec.Y, FrustumCornersLightView[j].Y);
+                    MaxVec.Z = std::max(MaxVec.Z, FrustumCornersLightView[j].Z);
+                }
+
+                CascadeLightProj = FMatrix::Identity();
+                CascadeLightProj.Data[0][0] = 2.0f / (MaxVec.X - MinVec.X);
+                CascadeLightProj.Data[1][1] = 2.0f / (MaxVec.Y - MinVec.Y);
+                CascadeLightProj.Data[2][2] = 1.0f / (MaxVec.Z - MinVec.Z);
+                CascadeLightProj.Data[3][0] = -(MaxVec.X + MinVec.X) / (MaxVec.X - MinVec.X);
+                CascadeLightProj.Data[3][1] = -(MaxVec.Y + MinVec.Y) / (MaxVec.Y - MinVec.Y);
+                CascadeLightProj.Data[3][2] = -MinVec.Z / (MaxVec.Z - MinVec.Z);
+            }
+
+            CascadedShadowMapConstants.LightViewP[i] = LightViewMatrix;
+            CascadedShadowMapConstants.LightProjP[i] = CascadeLightProj;
+
+            OutShadowData.LightViews.push_back(LightViewMatrix);
+            OutShadowData.LightProjs.push_back(CascadeLightProj);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void FUpdateLightBufferPass::SetShadowRenderTarget(EShadowProjectionType ProjType, EShadowFilterType FilterType, int CascadeIndex)
+{
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+
+    if (ProjType == EShadowProjectionType::CSM)
+    {
+        ID3D11DepthStencilView* CurrentDsv = Renderer.GetInstance().GetDeviceResources()->GetCascadedShadowMapDSV(CascadeIndex);
+        DeviceContext->OMSetRenderTargets(0, nullptr, CurrentDsv);
+        DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+        // TODO: VSM + CSM... (get color RTV from array)
+    }
+    else
+    {
+        if (FilterType == EShadowFilterType::VSM)
+        {
+            // Set Shadow Map DSV
+            ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
+            ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
+            // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
+            ID3D11ShaderResourceView* NullSRV = nullptr;
+            DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+            DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // 색상 정보는 ShadowRTV에, 깊이 정보는 ShadowDSV에 기록, GPU는 두개의 목적지를 모두 출력 대상으로 인식
+            const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };   // VSM Default
+            DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
+            DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
+        else  // None OR PCF 
+        {
+            ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
+            DeviceContext->OMSetRenderTargets(0, nullptr, ShadowDSV);
+            DeviceContext->ClearDepthStencilView(ShadowDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
+    }
+    DeviceContext->RSSetViewports(1, &DirectionalShadowViewport);
+}
+
+void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType ProjType, const FShadowCalculationData& InShadowData, int CascadeIndex, FRenderingContext& Context)
+{
+    UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
+    if (!Light) return;
+
+    FShadowMapConstants CasterConsts = {};
+
+    if (ProjType == EShadowProjectionType::Default)
+    {
+        CasterConsts.EyeView = FMatrix::Identity();
+        CasterConsts.EyeProj = FMatrix::Identity();
+        CasterConsts.EyeViewProjInv = FMatrix::Identity(); // LVP에선 안 씀
+
+        CasterConsts.LightViewP[0] = InShadowData.LightViews[0];
+        CasterConsts.LightProjP[0] = InShadowData.LightProjs[0];
+        CasterConsts.LightViewPInv[0] = InShadowData.LightViews[0].Inverse(); // L_texel 계산에 안 쓰지만 채워두면 안전
+
+        CasterConsts.ShadowParams = FVector4(0.002f, 0, 0, 0);
+
+        CasterConsts.LightDirWS = (-Light->GetForwardVector()).GetNormalized();
+        CasterConsts.bInvertedLight = 0;
+
+        // 오쏘 경계(l,r,b,t)와 섀도맵 해상도
+        CasterConsts.LightOrthoParams = InShadowData.LightOrthoParams;
+        CasterConsts.ShadowMapSize = FVector2(DirectionalShadowViewport.Width, DirectionalShadowViewport.Height);
+        CasterConsts.bUsePSM = 0;
+    }
+    else if (ProjType == EShadowProjectionType::PSM)
+    {
+
+    }
+    else if (ProjType == EShadowProjectionType::CSM)
+    {
+        CasterConsts.bUseCSM = 1;
+
+        CasterConsts.LightViewP[0] = InShadowData.LightViews[CascadeIndex];
+        CasterConsts.LightProjP[0] = InShadowData.LightProjs[CascadeIndex];
+
+        CasterConsts.CascadeSplits = InShadowData.CascadeSplits;
+    }
+
+    FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, CasterConsts);
 }
 
 void FUpdateLightBufferPass::CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera)
@@ -746,5 +1259,7 @@ void FUpdateLightBufferPass::Release()
     
     // Light Camera 상수 버퍼 해제
     SafeRelease(LightCameraConstantBuffer);
+    SafeRelease(SpotShadowAtlasSRV);
+    SafeRelease(SpotShadowAtlasStructuredBuffer);
 }
 

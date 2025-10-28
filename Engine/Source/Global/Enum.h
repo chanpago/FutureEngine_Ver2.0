@@ -166,6 +166,25 @@ enum class EEngineShowFlags : uint64
 	SF_VSM = 1 << 8,
 	SF_PCF = 1 << 9,
 	SF_CSM = 1 << 10,
+	SF_Shadow = 1 << 11,
+};
+
+enum class EShadowProjectionType : uint8_t
+{
+	Default,    // Light View Projection (basic)
+	PSM,        // Perspective Shadow Maps
+	CSM,        // Cascaded Shadow Maps
+
+	End = 0xFF
+};
+
+enum class EShadowFilterType : uint8_t
+{
+	None,
+	PCF,    // Percentage Closer Filtering
+	VSM,    // Variance Shadow Maps
+
+	End = 0xFF
 };
 
 inline uint64 operator|(EEngineShowFlags lhs, EEngineShowFlags rhs)

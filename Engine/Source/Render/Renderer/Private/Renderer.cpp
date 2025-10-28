@@ -72,7 +72,7 @@ void URenderer::Init(HWND InWindowHandle)
 
 	//Shadow Map 베이킹 Pass (가장 먼저 실행)
 	FUpdateLightBufferPass* UpdateLightBufferPass = new FUpdateLightBufferPass(Pipeline, ConstantBufferViewProj, ConstantBufferModels,
-		ShadowMapVS, ShadowMapPS, ShadowMapInputLayout);
+		ShadowMapVS, ShadowMapPSDefault, ShadowMapInputLayout);
 	RenderPasses.push_back(UpdateLightBufferPass);
 
 	LightPass = new FLightPass(Pipeline, ConstantBufferViewProj, GizmoInputLayout, GizmoVS, GizmoPS, DefaultDepthStencilState);
@@ -423,13 +423,18 @@ void URenderer::CreateShadowMapShader()
 		nullptr
 	);
 
-	// Pixel Shader 생성 (VSM용)
-	FRenderResourceFactory::CreatePixelShader(
-		ShaderFilePathString,
-		&ShadowMapPS,
-		"mainPS",
-		nullptr
-	);
+	// Compile default variant
+	TArray<D3D_SHADER_MACRO> defaultMacros = {
+		{ nullptr, nullptr }
+	};
+	FRenderResourceFactory::CreatePixelShader(ShaderFilePathString, &ShadowMapPSDefault, "mainPS", defaultMacros.data());
+
+	// Compile VSM variant
+	TArray<D3D_SHADER_MACRO> VsmMacros = {
+		{ "VSM_ENABLED", "1" },
+		{ nullptr, nullptr }
+	};
+	FRenderResourceFactory::CreatePixelShader(ShaderFilePathString, &ShadowMapPSVSM, "mainPS", VsmMacros.data());
 
 	RegisterShaderReloadCache(ShaderPath, ShaderUsage::STATICMESH);
 	ShadowMapPCFSampler = FRenderResourceFactory::CreatePCFShadowSamplerState();
@@ -835,15 +840,18 @@ void URenderer::RenderLevel(FViewport* InViewport)
 	{
 		FinalVisiblePrims = InViewport->GetViewportClient()->GetCamera()->GetViewVolumeCuller().GetRenderableObjects();
 	}
-	FRenderingContext RenderingContext(
 
+	FRenderingContext RenderingContext(
 		&ViewProj,
 		InViewport->GetViewportClient()->GetCamera(),
 		InViewport->GetViewportClient()->GetViewMode(),
 		CurrentLevel->GetShowFlags(),
 		InViewport->GetRenderRect(),
-		{DeviceResources->GetViewportInfo().Width, DeviceResources->GetViewportInfo().Height}
-		);
+		{DeviceResources->GetViewportInfo().Width, DeviceResources->GetViewportInfo().Height},
+		CurrentLevel->GetShadowProjectionType(),
+		CurrentLevel->GetShadowFilterType()
+	);
+
 	// 1. Sort visible primitive components
 	RenderingContext.AllPrimitives = FinalVisiblePrims;
 	for (auto& Prim : FinalVisiblePrims)
@@ -1030,6 +1038,18 @@ ID3D11PixelShader* URenderer::GetPixelShader(EViewModeIndex ViewModeIndex) const
 	}
 	// 기본값 반환 (모든 조건에 해당하지 않을 경우)
 	return UberLitPixelShader;
+}
+
+ID3D11PixelShader* URenderer::GetPixelShader(EShadowFilterType ShadowFilterType) const
+{
+	if (ShadowFilterType == EShadowFilterType::VSM)
+	{
+		return ShadowMapPSVSM;
+	}
+	else
+	{
+		return ShadowMapPSDefault;
+	}
 }
 
 void URenderer::CreateConstantBuffers()

@@ -20,8 +20,17 @@ public:
 	virtual void Execute(FRenderingContext& Context) override;
 	virtual void Release() override;
 
-	FMatrix GetLightViewMatrix() const { return LightViewP; }
-	FMatrix GetLightProjectionMatrix() const { return LightProjP; }
+    FMatrix GetLightViewMatrix() const { return LightViewP; }
+    FMatrix GetLightProjectionMatrix() const { return LightProjP; }
+    // Spot light shadow matrices (for single caster)
+    FMatrix GetSpotLightViewMatrix() const { return SpotLightView; }
+    FMatrix GetSpotLightProjectionMatrix() const { return SpotLightProj; }
+    // Spot shadow atlas resources
+    ID3D11ShaderResourceView* GetSpotShadowAtlasSRV() const { return SpotShadowAtlasSRV; }
+    uint32 GetSpotAtlasCols() const { return SpotAtlasCols; }
+    uint32 GetSpotAtlasRows() const { return SpotAtlasRows; }
+    float  GetSpotTileWidth() const { return SpotShadowViewport.Width; }
+    float  GetSpotTileHeight() const { return SpotShadowViewport.Height; }
 	FMatrix GetCachedEyeView() const { return CachedEyeView; }
 	FMatrix GetCachedEyeProj() const { return CachedEyeProj; }
 
@@ -31,9 +40,25 @@ public:
 	void CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera);
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
+	struct FShadowCalculationData
+	{
+	    TArray<FMatrix> LightViews;
+	    TArray<FMatrix> LightProjs;
+	    FVector4        LightOrthoParams; // For EShadowProjectionType::None
+		FVector4		CascadeSplits;	  // For EShadowProjectionType::CSM
+	};
+
 private:
+	void NewBakeShadowMap(FRenderingContext& Context);
+	void BakeSpotShadowMap(FRenderingContext& Context);
+	
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
+
+	// Helper Functions
+	void CalculateShadowMatrices(EShadowProjectionType ProjType, FRenderingContext& Context, FShadowCalculationData& OutShadowData);
+	void SetShadowRenderTarget(EShadowProjectionType ProjType, EShadowFilterType FilterType, int CascadeIndex);
+	void UpdateShadowCasterConstants(EShadowProjectionType ProjType, const FShadowCalculationData& InShadowData, int CascadeIndex, FRenderingContext& Context);
 
 	// Shadow Map Shaders
 	ID3D11VertexShader* ShadowMapVS = nullptr;
@@ -41,14 +66,22 @@ private:
 	ID3D11InputLayout* ShadowMapInputLayout = nullptr;
 	ID3D11Buffer* LightCameraConstantBuffer = nullptr;
 	ID3D11Buffer* PSMConstantBuffer = nullptr;
+	// Spot shadow atlas structured buffer (per-spot view/proj + atlas transform)
+	ID3D11Buffer* SpotShadowAtlasStructuredBuffer = nullptr;
+	ID3D11ShaderResourceView* SpotShadowAtlasSRV = nullptr;
 
 	// Shadow Map Viewports
 	D3D11_VIEWPORT DirectionalShadowViewport;
 	D3D11_VIEWPORT SpotShadowViewport;
 	D3D11_VIEWPORT PointShadowViewport;
+	// Atlas layout for spot shadows
+	uint32 SpotAtlasCols = 4;
+	uint32 SpotAtlasRows = 4;
 
-	FMatrix LightViewP;
-	FMatrix LightProjP;
+    FMatrix LightViewP;
+    FMatrix LightProjP;
+    FMatrix SpotLightView;
+    FMatrix SpotLightProj;
 	FMatrix CachedEyeView;  // PSM 베이킹 시 사용한 카메라 V_e
 	FMatrix CachedEyeProj;  // PSM 베이킹 시 사용한 카메라 P_e
 	

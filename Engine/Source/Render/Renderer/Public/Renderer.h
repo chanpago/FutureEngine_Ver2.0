@@ -109,6 +109,7 @@ public:
 
 	ID3D11VertexShader* GetVertexShader(EViewModeIndex ViewModeIndex) const;
 	ID3D11PixelShader* GetPixelShader(EViewModeIndex ViewModeIndex) const;
+	ID3D11PixelShader* GetPixelShader(EShadowFilterType ShadowFilterType) const;
 
 	FLightPass* GetLightPass() { return LightPass; }
 	FClusteredRenderingGridPass* GetClusteredRenderingGridPass() { return ClusteredRenderingGridPass; }
@@ -174,7 +175,8 @@ private:
 
 	// Shadow Map Shaders
 	ID3D11VertexShader* ShadowMapVS = nullptr;
-	ID3D11PixelShader* ShadowMapPS = nullptr;
+	ID3D11PixelShader* ShadowMapPSVSM = nullptr;
+	ID3D11PixelShader* ShadowMapPSDefault = nullptr;
 	ID3D11InputLayout* ShadowMapInputLayout = nullptr;
 	ID3D11SamplerState* ShadowMapPCFSampler = nullptr;
 	ID3D11SamplerState* ShadowMapClampSampler = nullptr;

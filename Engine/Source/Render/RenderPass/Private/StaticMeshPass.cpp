@@ -7,6 +7,7 @@
 #include "Texture/Public/Texture.h"
 #include "Render/RenderPass/Public/UpdateLightBufferPass.h"
 #include "Component/Public/DirectionalLightComponent.h"
+#include "Component/Public/SpotLightComponent.h"
 
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
@@ -14,143 +15,249 @@ FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstant
 {
 	ConstantBufferMaterial = FRenderResourceFactory::CreateConstantBuffer<FMaterialConstants>();
 	ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
+	ConstantBufferSpotShadow = FRenderResourceFactory::CreateConstantBuffer<FSpotShadowConstants>();
 }
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
 {
 	const auto& Renderer = URenderer::GetInstance();
 	FRenderState RenderState = UStaticMeshComponent::GetClassDefaultRenderState();
+
+	// +-+-+ SET UP THE PIPELINE (SHADERS, RASTERIZER STAGE) +-+-+
 	if (Context.ViewMode == EViewModeIndex::VMI_Wireframe)
 	{
 		RenderState.CullMode = ECullMode::None;
 		RenderState.FillMode = EFillMode::WireFrame;
 	}
-	else
-	{
+	else {
 		VS = Renderer.GetVertexShader(Context.ViewMode);
 		PS = Renderer.GetPixelShader(Context.ViewMode);
 	}
+	if (!VS || !PS) { UE_LOG_ERROR("StaticMeshPass: missing shaders"); return; }
 
-	// ✅ 널 가드 + 로그 + 안전 종료(또는 폴백)
-	if (!VS) {
-		UE_LOG_ERROR("StaticMeshPass: VS null for ViewMode=%d", (int)Context.ViewMode);
-		return; // 혹은 VS = GetDefaultUberVS();
-	}
-	if (!PS) {
-		UE_LOG_ERROR("StaticMeshPass: PS null for ViewMode=%d", (int)Context.ViewMode);
-		return; // 혹은 PS = GetDefaultUberPS();
-	}
-	
 	ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState(RenderState);
 	FPipelineInfo PipelineInfo = { InputLayout, VS, RS, DS, PS, nullptr, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST };
 	Pipeline->UpdatePipeline(PipelineInfo);
-
-    // Set default samplers: s0 and s1 (linear clamp)
-    //Pipeline->SetSamplerState(0, EShaderType::PS, URenderer::GetInstance().GetDefaultSampler());
-    //Pipeline->SetSamplerState(1, EShaderType::PS, URenderer::GetInstance().GetShadowMapClampSampler());
-
 	Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
 	Pipeline->SetConstantBuffer(1, EShaderType::PS, ConstantBufferCamera);
 
-	// Shadow Map 상수 버퍼 및 SRV 바인딩 (b6, t10 슬롯)
-	FUpdateLightBufferPass* UpdateLightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-	if (UpdateLightBufferPass)
+	// +-+-+ BIND SHADOW MAP CONSTANT BUFFER AND SRV +-+-+
+	FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
+	if (LightBufferPass && (Context.ShowFlags & EEngineShowFlags::SF_Shadow))
 	{
-		const bool bUseVSM = (Context.ShowFlags & EEngineShowFlags::SF_VSM) != 0;
-		const bool bUsePCF = (Context.ShowFlags & EEngineShowFlags::SF_PCF) != 0;
-		const bool bUseCSM = (Context.ShowFlags & EEngineShowFlags::SF_CSM) != 0;
+		const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+		const EShadowFilterType FilterType = Context.ShadowFilterType;
 
-		bool bShouldBindShadows = bUseCSM || bUseVSM || bUseCSM;
 		ID3D11ShaderResourceView* ShadowMapSRV = nullptr;
-		FShadowMapConstants ShadowMapConsts = {};
+		FShadowMapConstants ShadowConsts = {};
 
-		if (bUseCSM)
+		ShadowConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1.0f : 0.0f;
+		ShadowConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1.0f : 0.0f;
+		ShadowConsts.bUsePSM = (ProjectionType == EShadowProjectionType::PSM) ? 1.0f : 0.0f;
+		ShadowConsts.bUseCSM = (ProjectionType == EShadowProjectionType::CSM) ? 1.0f : 0.0f;
+		ShadowConsts.ShadowParams.X = (FilterType == EShadowFilterType::VSM) ? 0.0015f : 0.005f;
+
+		switch (ProjectionType)
 		{
-			// Get pre-computed CSM constants from LightBufferPass
-			ShadowMapConsts = UpdateLightBufferPass->GetCascadedShadowMapConstants();
-			// Specify the use of CSM
-			ShadowMapConsts.bUseCSM = 1.0f;
-
-			if (bUseVSM)
-			{
-				// CSM + VSM
-				ShadowMapConsts.bUseVSM = 1.0f;
-				ShadowMapConsts.ShadowParams.X = 0.0015f;  // VSM needs less bias
-				// TODO: needs Texture2DArray resource of VSM format (color)
-				// bShouldBindShadows = false;        // Temporarily disabled
-			}
-			else
-			{
-				// Only CSM
-				ShadowMapConsts.bUseVSM = 0.0f;
-				ShadowMapConsts.ShadowParams.X = 0.005f;  // VSM needs less bias
-				ShadowMapSRV = Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
-			}
-		}
-		else
+		case EShadowProjectionType::Default:
+		case EShadowProjectionType::PSM:
 		{
-			// No CSM
-
 			// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
-			ShadowMapConsts.EyeView = UpdateLightBufferPass->GetCachedEyeView();
-			ShadowMapConsts.EyeProj = UpdateLightBufferPass->GetCachedEyeProj();
-			ShadowMapConsts.EyeViewProjInv = (ShadowMapConsts.EyeView * ShadowMapConsts.EyeProj).Inverse();
+			ShadowConsts.EyeView = LightBufferPass->GetCachedEyeView();
+			ShadowConsts.EyeProj = LightBufferPass->GetCachedEyeProj();
+			ShadowConsts.EyeViewProjInv = (ShadowConsts.EyeView * ShadowConsts.EyeProj).Inverse();
 
-			ShadowMapConsts.LightViewP[0] = UpdateLightBufferPass->GetLightViewMatrix();
-			ShadowMapConsts.LightProjP[0] = UpdateLightBufferPass->GetLightProjectionMatrix();
-			ShadowMapConsts.LightViewPInv[0] = ShadowMapConsts.LightViewP[0].Inverse();
+			ShadowConsts.LightViewP[0] = LightBufferPass->GetLightViewMatrix();
+			ShadowConsts.LightProjP[0] = LightBufferPass->GetLightProjectionMatrix();
+			ShadowConsts.LightViewPInv[0] = ShadowConsts.LightViewP[0].Inverse();
 
-			ShadowMapConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
+			ShadowConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
 			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
-			ShadowMapConsts.LightDirWS = LdirWS;
-			ShadowMapConsts.bInvertedLight = 0;
+			ShadowConsts.LightDirWS = LdirWS;
+			ShadowConsts.bInvertedLight = 0;
 
-			ShadowMapConsts.LightOrthoParams = UpdateLightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
+			ShadowConsts.LightOrthoParams = LightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
 
-			ShadowMapConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
-			ShadowMapConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
-			ShadowMapConsts.bUseVSM = bUseVSM ? 1.0f : 0.0f;
-			ShadowMapConsts.bUsePCF = bUsePCF ? 1.0f : 0.0f;
+			ShadowConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
+			ShadowConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+			break;
+		}
+		case EShadowProjectionType::CSM:
+		{
+			ShadowConsts = LightBufferPass->GetCascadedShadowMapConstants();
+			ShadowConsts.bUseCSM = 1.0f;
+			break;
+		}
+		default:
+			break;
+		}
 
-			ShadowMapSRV = bUseVSM && !(bUsePCF) 
+		if (ProjectionType == EShadowProjectionType::CSM)
+		{
+			ShadowMapSRV = ShadowConsts.bUseVSM
+				? nullptr /* Renderer.GetDeviceResources()->GetCascadedShadowMapColorSRV() */
+				: Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
+		}
+		else  // LVP or PSM
+		{
+			ShadowMapSRV = ShadowConsts.bUseVSM && !(ShadowConsts.bUsePCF)
 				? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
 				: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
 		}
 
+		//if (bUseCSM)
+		//{
+		//	//// Get pre-computed CSM constants from LightBufferPass
+		//	//ShadowConsts = LightBufferPass->GetCascadedShadowMapConstants();
+		//	//// Specify the use of CSM
+		//	//ShadowConsts.bUseCSM = 1.0f;
+
+		//	//if (bUseVSM)
+		//	//{
+		//	//	// CSM + VSM
+		//	//	ShadowConsts.bUseVSM = 1.0f;
+		//	//	ShadowConsts.ShadowParams.X = 0.0015f;  // VSM needs less bias
+		//	//	// TODO: needs Texture2DArray resource of VSM format (color)
+		//	//	// bShouldBindShadows = false;        // Temporarily disabled
+		//	//}
+		//	//else
+		//	//{
+		//	//	// Only CSM
+		//	//	ShadowConsts.bUseVSM = 0.0f;
+		//	//	ShadowConsts.ShadowParams.X = 0.005f;  // VSM needs less bias
+		//	//	ShadowMapSRV = Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
+		//	//}
+		//}
+
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{
-			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowMapConsts);
-
-			// 바인딩 (PS b6 / t10)
-			Pipeline->SetConstantBuffer(6, EShaderType::VS, ConstantBufferShadowMap); // ← 추가(필요시)
+			FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowConsts);
 			Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
-			if (bUseCSM)
+
+			// +-+-+ BIND CONSTANT & RESOURCES +-+-+
+			if (ShadowConsts.bUseCSM)
 			{
 				Pipeline->SetShaderResourceView(11, EShaderType::PS, ShadowMapSRV);
 			}
-			else
+			else   // LVP or PSM
 			{
 				Pipeline->SetShaderResourceView(10, EShaderType::PS, ShadowMapSRV);
 			}
 
-			// hard shadow 방식 -> sampler를 default
-			// vsm 방식 -> sampler를 clamp 
-			// pcf 방식 -> sampler를 pcf
-
+			// +-+-+ SET SAMPLER +-+-+
 			Pipeline->SetSamplerState(0, EShaderType::PS, Renderer.GetDefaultSampler());
-			Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
-			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
-			Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+			if (FilterType == EShadowFilterType::None)
+			{
+				Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+			}
+			else if (FilterType == EShadowFilterType::PCF)
+			{
+				Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+			}
+			else if (FilterType == EShadowFilterType::VSM)
+			{
+				Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+			}
 		}
 		else
 		{
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
 			Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
 		}
+
+		// Bind spotlight shadow (single caster) alongside directional
+		if (!Context.SpotLights.empty())
+		{
+			USpotLightComponent* SpotCaster = nullptr;
+			for (auto* SL : Context.SpotLights)
+			{
+				// if (SL && SL->GetCastShadows())
+				// {
+				SpotCaster = SL;
+				// }
+				if (SpotCaster)
+				{
+					FSpotShadowConstants SpotConsts = {};
+					SpotConsts.LightView = LightBufferPass->GetSpotLightViewMatrix();
+					SpotConsts.LightProj = LightBufferPass->GetSpotLightProjectionMatrix();
+					SpotConsts.SpotPosition = SpotCaster->GetWorldLocation();
+					SpotConsts.SpotRange = SpotCaster->GetAttenuationRadius();
+					SpotConsts.SpotDirection = SpotCaster->GetForwardVector().GetNormalized();
+					SpotConsts.OuterCone = SpotCaster->GetOuterConeAngle();
+					SpotConsts.InnerCone = SpotCaster->GetInnerConeAngle();
+					SpotConsts.ShadowMapSize = FVector2(1024.0f, 1024.0f);
+					SpotConsts.ShadowBias = 0.005f;
+					SpotConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
+					SpotConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
+
+					// Atlas info (must match DeviceResources atlas configuration)
+					const float tileW = LightBufferPass->GetSpotTileWidth();
+					const float tileH = LightBufferPass->GetSpotTileHeight();
+					const uint32 cols = LightBufferPass->GetSpotAtlasCols();
+					const uint32 rows = LightBufferPass->GetSpotAtlasRows();
+					SpotConsts.SpotAtlasTextureSize = FVector2(tileW * cols, tileH * rows);
+					SpotConsts.SpotTileSize = FVector2(tileW, tileH);
+					SpotConsts.SpotAtlasCols = cols;
+					SpotConsts.SpotAtlasRows = rows;
+
+					FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferSpotShadow, SpotConsts);
+					Pipeline->SetConstantBuffer(7, EShaderType::PS, ConstantBufferSpotShadow);
+
+					ID3D11ShaderResourceView* SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
+					Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
+
+					// Bind atlas entries buffer (t13)
+					Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());
+
+					// Sampler (reuse same policy)
+					if (FilterType == EShadowFilterType::None)
+					{
+						Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+					}
+					else if (FilterType == EShadowFilterType::PCF)
+					{
+						Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+					}
+					else if (FilterType == EShadowFilterType::VSM)
+					{
+						Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+					}
+				}
+			}
+		}
+        else
+        {
+            // No spot shadow caster: clear bindings to avoid sampling invalid SRV/CB
+            Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
+            Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
+            Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
+        }
 	}
-	
+
+	/**
+	* @todo Find a better way to reduce depdency upon Renderer class.
+	* @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
+	*/
+
+	// +-+ RTVS SETUP +-+
+	const auto& DeviceResources = Renderer.GetDeviceResources();
+	ID3D11RenderTargetView* RTV = nullptr;
+	RTV = Renderer.GetFXAA() 
+		? DeviceResources->GetSceneColorRenderTargetView()
+		: DeviceResources->GetRenderTargetView();
+	ID3D11RenderTargetView* RTVs[2] = { RTV, DeviceResources->GetNormalRenderTargetView() };
+	ID3D11DepthStencilView* DSV = DeviceResources->GetDepthStencilView();
+	Pipeline->SetRenderTargets(2, RTVs, DSV);
+
+	// +-+ MESH RENDERING +-+
+	RenderStaticMeshes(Context);
+}
+
+void FStaticMeshPass::RenderStaticMeshes(FRenderingContext& Context)
+{
 	if (!(Context.ShowFlags & EEngineShowFlags::SF_StaticMesh)) { return; }
+
 	TArray<UStaticMeshComponent*>& MeshComponents = Context.StaticMeshes;
 	sort(MeshComponents.begin(), MeshComponents.end(),
 		[](UStaticMeshComponent* A, UStaticMeshComponent* B) {
@@ -162,29 +269,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	FStaticMesh* CurrentMeshAsset = nullptr;
 	UMaterial* CurrentMaterial = nullptr;
 
-	// --- RTVs Setup ---
-	
-	/**
-	 * @todo Find a better way to reduce depdency upon Renderer class.
-	 * @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
-	 */
-	const auto& DeviceResources = Renderer.GetDeviceResources();
-	ID3D11RenderTargetView* RTV = nullptr;
-	if (Renderer.GetFXAA())
-	{
-		RTV = DeviceResources->GetSceneColorRenderTargetView();	
-	}
-	else
-	{
-		RTV = DeviceResources->GetRenderTargetView();	
-	}
-	ID3D11RenderTargetView* RTVs[2] = { RTV, DeviceResources->GetNormalRenderTargetView() };
-	ID3D11DepthStencilView* DSV = DeviceResources->GetDepthStencilView();
-	Pipeline->SetRenderTargets(2, RTVs, DSV);
-
-	// --- RTVs Setup End ---
-
-	for (UStaticMeshComponent* MeshComp : MeshComponents) 
+	for (UStaticMeshComponent* MeshComp : MeshComponents)
 	{
 		if (!MeshComp->IsVisible()) { continue; }
 		if (!MeshComp->GetStaticMesh()) { continue; }
@@ -197,17 +282,17 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetIndexBuffer(MeshComp->GetIndexBuffer(), 0);
 			CurrentMeshAsset = MeshAsset;
 		}
-		
+
 		FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferModel, MeshComp->GetWorldTransformMatrix());
 		Pipeline->SetConstantBuffer(0, EShaderType::VS, ConstantBufferModel);
 
-		if (MeshAsset->MaterialInfo.empty() || MeshComp->GetStaticMesh()->GetNumMaterials() == 0) 
+		if (MeshAsset->MaterialInfo.empty() || MeshComp->GetStaticMesh()->GetNumMaterials() == 0)
 		{
 			Pipeline->DrawIndexed(MeshAsset->Indices.size(), 0, 0);
 			continue;
 		}
 
-		if (MeshComp->IsScrollEnabled()) 
+		if (MeshComp->IsScrollEnabled())
 		{
 			MeshComp->SetElapsedTime(MeshComp->GetElapsedTime() + UTimeManager::GetInstance().GetDeltaTime());
 		}
@@ -232,7 +317,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				{
 					MaterialConstants.MaterialFlags &= ~HAS_NORMAL_MAP;
 				}
-				if (Material->GetAlphaTexture())    { MaterialConstants.MaterialFlags |= HAS_ALPHA_MAP; }
+				if (Material->GetAlphaTexture())	{ MaterialConstants.MaterialFlags |= HAS_ALPHA_MAP; }
 				if (Material->GetBumpTexture())     { MaterialConstants.MaterialFlags |= HAS_BUMP_MAP; }
 				MaterialConstants.Time = MeshComp->GetElapsedTime();
 
@@ -260,7 +345,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				{
 					Pipeline->SetShaderResourceView(4, EShaderType::PS, AlphaTexture->GetTextureSRV());
 				}
-				if (UTexture* BumpTexture = Material->GetBumpTexture()) 
+				if (UTexture* BumpTexture = Material->GetBumpTexture())
 				{ // 범프 텍스처 추가 그러나 범프 텍스처 사용하지 않아서 없을 것임. 무시 ㄱㄱ
 					Pipeline->SetShaderResourceView(5, EShaderType::PS, BumpTexture->GetTextureSRV());
 					// 필요한 경우 샘플러 지정
@@ -268,25 +353,15 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				}
 				CurrentMaterial = Material;
 			}
-				Pipeline->DrawIndexed(Section.IndexCount, Section.StartIndex, 0);
+			Pipeline->DrawIndexed(Section.IndexCount, Section.StartIndex, 0);
 		}
 	}
 	Pipeline->SetConstantBuffer(2, EShaderType::PS, nullptr);
-
-	
-	// --- RTVs Reset ---
-	
-	/**
-	 * @todo Find a better way to reduce depdency upon Renderer class.
-	 * @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
-	 */
-	Pipeline->SetRenderTargets(2, RTVs, DSV);
-
-	// --- RTVs Reset End ---
 }
 
 void FStaticMeshPass::Release()
 {
 	SafeRelease(ConstantBufferMaterial);
 	SafeRelease(ConstantBufferShadowMap);
+	SafeRelease(ConstantBufferSpotShadow);
 }
