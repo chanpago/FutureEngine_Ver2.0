@@ -179,32 +179,6 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				// }
 				if (SpotCaster)
 				{
-					FSpotShadowConstants SpotConsts = {};
-					SpotConsts.LightView = LightBufferPass->GetSpotLightViewMatrix();
-					SpotConsts.LightProj = LightBufferPass->GetSpotLightProjectionMatrix();
-					SpotConsts.SpotPosition = SpotCaster->GetWorldLocation();
-					SpotConsts.SpotRange = SpotCaster->GetAttenuationRadius();
-					SpotConsts.SpotDirection = SpotCaster->GetForwardVector().GetNormalized();
-					SpotConsts.OuterCone = SpotCaster->GetOuterConeAngle();
-					SpotConsts.InnerCone = SpotCaster->GetInnerConeAngle();
-					SpotConsts.ShadowMapSize = FVector2(1024.0f, 1024.0f);
-					SpotConsts.ShadowBias = 0.005f;
-					SpotConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
-					SpotConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
-
-					// Atlas info (must match DeviceResources atlas configuration)
-					const float tileW = LightBufferPass->GetSpotTileWidth();
-					const float tileH = LightBufferPass->GetSpotTileHeight();
-					const uint32 cols = LightBufferPass->GetSpotAtlasCols();
-					const uint32 rows = LightBufferPass->GetSpotAtlasRows();
-					SpotConsts.SpotAtlasTextureSize = FVector2(tileW * cols, tileH * rows);
-					SpotConsts.SpotTileSize = FVector2(tileW, tileH);
-					SpotConsts.SpotAtlasCols = cols;
-					SpotConsts.SpotAtlasRows = rows;
-
-					FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferSpotShadow, SpotConsts);
-					Pipeline->SetConstantBuffer(7, EShaderType::PS, ConstantBufferSpotShadow);
-
 	                ID3D11ShaderResourceView* SpotSRV = nullptr;
 	                if (FilterType == EShadowFilterType::VSM)
 	                {
@@ -241,7 +215,6 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
             // No spot shadow caster: clear bindings to avoid sampling invalid SRV/CB
             Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
             Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
-            Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
         }
 	}
 

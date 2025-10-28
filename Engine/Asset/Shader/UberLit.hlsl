@@ -125,30 +125,6 @@ cbuffer ShadowMapConstants : register(b6)
     float2 pad;
 };
 
-// Single-spot shadow constants (for one caster)
-cbuffer SpotShadowConstants : register(b7)
-{
-    row_major float4x4 SpotLightView;
-    row_major float4x4 SpotLightProj;
-    float3 SpotPositionWS;
-    float SpotRange;
-    float3 SpotDirectionWS;
-    float SpotOuterCone;
-    float SpotInnerCone;
-    float2 SpotShadowMapSize;
-    float SpotShadowBias;
-    uint SpotUseVSM;
-    uint SpotUsePCF;
-    float SpotPadding;
-
-    // Atlas info for multi-spot shadows
-    float2 SpotAtlasTextureSize; // (AtlasW, AtlasH)
-    float2 SpotTileSize;         // (TileW, TileH)
-    uint   SpotAtlasCols;
-    uint   SpotAtlasRows;
-    float2 SpotAtlasPadding;
-};
-
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
@@ -575,10 +551,6 @@ inline float CalculateShadowFactor(float3 WorldPosition)
 // Compute spotlight shadow factor from single-spot constants (b7/t12)
 float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
 {
-    // If constants not initialized or SRV not bound, skip sampling
-    if (SpotShadowMapSize.x <= 0.0f || SpotRange <= 0.0f)
-        return 1.0f;
-
     // Fetch per-spot view/proj and atlas transform
     FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
 
@@ -611,7 +583,7 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     float bias = 0.0001f;
 
     // PCF path (3x3) using hardware comparison sampler
-    if (SpotUsePCF != 0)
+    if (bUsePCF != 0)
     {
         float shadow = 0.0f;
         // One texel in atlas UV space
@@ -630,7 +602,7 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     }
 
     // VSM path using precomputed moments (R32G32_FLOAT)
-    if (SpotUseVSM != 0)
+    if (bUseVSM != 0)
     {
         // Sample moments without derivatives to allow dynamic loops
         float2 Moments = SpotShadowMapTexture.SampleLevel(SamplerLinearClamp, uvAtlas, 0).rg;
