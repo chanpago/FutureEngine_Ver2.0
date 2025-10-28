@@ -383,6 +383,11 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
     const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
     if (NumSpotLights > 0)
     {
+        // Unbind any SRVs that alias the spot shadow atlas to avoid D3D11 read-write hazards
+        // StaticMeshPass binds the spot atlas at PS t12 and the atlas entries at t13
+        ID3D11ShaderResourceView* NullSRVs[2] = { nullptr, nullptr };
+        DeviceContext->PSSetShaderResources(12, 2, NullSRVs);
+
         ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
         if (FilterType == EShadowFilterType::VSM)
         {

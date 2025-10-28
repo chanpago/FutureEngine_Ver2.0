@@ -5,6 +5,10 @@
 #include "Level/Public/Level.h"
 #include "Component/Public/ActorComponent.h"
 #include "ImGui/imgui.h"
+#include "Manager/UI/Public/ViewportManager.h"
+#include "Editor/Public/Camera.h"
+#include "Editor/Public/Editor.h"
+#include "Render/UI/Viewport/Public/ViewportClient.h"
 #include "Render/Renderer/Public/Renderer.h"
 #include "Render/Renderer/Public/RenderResourceFactory.h"
 #include "Render/RenderPass/Public/UpdateLightBufferPass.h"
@@ -145,6 +149,65 @@ void UPointLightComponentWidget::RenderWidget()
     }
     
     ImGui::PopStyleColor(3);
+
+    // Override camera with light's perspective (position only) + auto-restore
+    static bool bViewFromPoint = false;
+    static bool bPrevViewFromPoint = false;
+    struct FSavedCam { bool Has=false; ECameraType Type; FVector Loc; FVector Rot; float Fov; float NearZ; float FarZ; };
+    static FSavedCam Saved{};
+    bool toggled3 = ImGui::Checkbox("View From Light (Camera)", &bViewFromPoint);
+    UViewportManager& VM3 = UViewportManager::GetInstance();
+    int32 active3 = VM3.GetActiveIndex();
+    auto& clients3 = VM3.GetClients();
+    UCamera* Cam3 = (active3 >= 0 && active3 < (int)clients3.size() && clients3[active3]) ? clients3[active3]->GetCamera() : nullptr;
+
+    if (toggled3)
+    {
+        if (bViewFromPoint && Cam3)
+        {
+            Saved.Has = true;
+            Saved.Type = Cam3->GetCameraType();
+            Saved.Loc  = Cam3->GetLocation();
+            Saved.Rot  = Cam3->GetRotation();
+            Saved.Fov  = Cam3->GetFovY();
+            Saved.NearZ= Cam3->GetNearZ();
+            Saved.FarZ = Cam3->GetFarZ();
+            GEditor->GetEditorModule()->SetGizmoVisible(false);
+        }
+        else if (!bViewFromPoint && Saved.Has && Cam3)
+        {
+            Cam3->SetCameraType(Saved.Type);
+            Cam3->SetLocation(Saved.Loc);
+            Cam3->SetRotation(Saved.Rot);
+            Cam3->SetFovY(Saved.Fov);
+            Cam3->SetNearZ(Saved.NearZ);
+            Cam3->SetFarZ(Saved.FarZ);
+            Saved.Has = false;
+            GEditor->GetEditorModule()->SetGizmoVisible(true);
+        }
+        bPrevViewFromPoint = bViewFromPoint;
+    }
+
+    // Failsafe: if override is off but we still have a saved camera and a valid camera appears, restore now
+    if (!bViewFromPoint && Saved.Has && Cam3)
+    {
+        Cam3->SetCameraType(Saved.Type);
+        Cam3->SetLocation(Saved.Loc);
+        Cam3->SetRotation(Saved.Rot);
+        Cam3->SetFovY(Saved.Fov);
+        Cam3->SetNearZ(Saved.NearZ);
+        Cam3->SetFarZ(Saved.FarZ);
+        Saved.Has = false;
+        GEditor->GetEditorModule()->SetGizmoVisible(true);
+    }
+
+    if (bViewFromPoint && Cam3)
+    {
+        Cam3->SetCameraType(ECameraType::ECT_Perspective);
+        Cam3->SetLocation(PointLightComponent->GetWorldLocation());
+        Cam3->SetNearZ(0.05f);
+        Cam3->SetFarZ(std::max(PointLightComponent->GetAttenuationRadius(), 10.0f));
+    }
 
     ImGui::Separator();
 

@@ -91,10 +91,13 @@ void UEditor::RenderEditor()
 
 void UEditor::RenderGizmo(UCamera* InCamera)
 {
-	if (GEditor->IsPIESessionActive()) { return; }
-	Gizmo.RenderGizmo(InCamera);
+    if (GEditor->IsPIESessionActive()) { return; }
+    if (bRenderGizmo)
+    {
+        Gizmo.RenderGizmo(InCamera);
+    }
 	
-	// 모든 DirectionalLight의 빛 방향 기즈모 렌더링 (선택 여부 무관)
+    // 모든 DirectionalLight/SpotLight의 빛 방향 기즈모 렌더링 (선택 여부 무관)
 	if (ULevel* CurrentLevel = GWorld->GetLevel())
 	{
 		const TArray<ULightComponent*>& LightComponents = CurrentLevel->GetLightComponents();
