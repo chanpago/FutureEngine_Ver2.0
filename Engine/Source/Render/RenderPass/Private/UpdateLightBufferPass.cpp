@@ -48,6 +48,10 @@ FUpdateLightBufferPass::FUpdateLightBufferPass(UPipeline* InPipeline, ID3D11Buff
     PointShadowViewport.MaxDepth = 1.0f;
     PointShadowViewport.TopLeftX = 0.0f;
     PointShadowViewport.TopLeftY = 0.0f;
+
+    // Create structured buffer for spot shadow atlas entries
+    SpotShadowAtlasStructuredBuffer = FRenderResourceFactory::CreateStructuredBuffer<FSpotShadowAtlasEntry>(256);
+    FRenderResourceFactory::CreateStructuredShaderResourceView(SpotShadowAtlasStructuredBuffer, &SpotShadowAtlasSRV);
 }
 
 FUpdateLightBufferPass::~FUpdateLightBufferPass()
@@ -161,28 +165,42 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
     Pipeline->UpdatePipeline(PipelineInfo);
 
 
-    // +-+-+ BAKE SPOTLIGHT SHADOW MAP (single caster) +-+-+
-    if (!Context.SpotLights.empty())
+    // +-+-+ BAKE SPOTLIGHT SHADOW MAP (atlas for multiple casters) +-+-+
+    // Build filtered spot list matching LightPass ordering (visible + enabled)
+    TArray<USpotLightComponent*> FilteredSpots;
+    for (auto* SL : Context.SpotLights)
     {
-        USpotLightComponent* SpotCaster = nullptr;
-        for (auto* SL : Context.SpotLights)
+        // TODO: also check SL->GetCastShadows()
+        if (SL && SL->GetVisible() && SL->GetLightEnabled())
         {
-            // if (SL && SL->GetCastShadows())
-            // {
-                SpotCaster = SL;
-                break;
-            // }
+            FilteredSpots.push_back(SL);
         }
+    }
+    const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
+    if (NumSpotLights > 0)
+    {
+        ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
+        DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+        // Clear entire atlas once
+        DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
-        if (SpotCaster)
+        // Prepare atlas math
+        const float tileW = SpotShadowViewport.Width;
+        const float tileH = SpotShadowViewport.Height;
+        const float atlasW = tileW * static_cast<float>(SpotAtlasCols);
+        const float atlasH = tileH * static_cast<float>(SpotAtlasRows);
+
+        // Build entries to upload to structured buffer (index by global spot index)
+        TArray<FSpotShadowAtlasEntry> Entries;
+        Entries.resize(NumSpotLights);
+
+        // Render each spot into its atlas tile
+        for (int32 idx = 0; idx < NumSpotLights; ++idx)
         {
-            ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
-            DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
-            DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            USpotLightComponent* SpotCaster = FilteredSpots[idx];
+            if (!SpotCaster) { continue; }
 
-            DeviceContext->RSSetViewports(1, &SpotShadowViewport);
-
-            // Build spot light view matrix
+            // Compute view matrix from light basis
             const FVector eye = SpotCaster->GetWorldLocation();
             const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
             const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
@@ -217,20 +235,53 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
             SpotCasterConsts.LightViewP[0] = V;
             SpotCasterConsts.LightProjP[0] = P;
             SpotCasterConsts.LightViewPInv[0] = V.Inverse();
-            SpotCasterConsts.ShadowMapSize = FVector2(SpotShadowViewport.Width, SpotShadowViewport.Height);
+            SpotCasterConsts.ShadowMapSize = FVector2(tileW, tileH);
             SpotCasterConsts.ShadowParams = FVector4(0.0008f, 0, 0, 0);
             FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, SpotCasterConsts);
 
-            // Cache for later (StaticMeshPass builds separate PS constants for spot)
-            SpotLightView = V;
-            SpotLightProj = P;
+            // Calculate atlas tile viewport
+            const uint32 tileX = static_cast<uint32>(idx % SpotAtlasCols);
+            const uint32 tileY = static_cast<uint32>(idx / SpotAtlasCols);
+            D3D11_VIEWPORT vp = SpotShadowViewport;
+            vp.TopLeftX = tileW * static_cast<float>(tileX);
+            vp.TopLeftY = tileH * static_cast<float>(tileY);
+            DeviceContext->RSSetViewports(1, &vp);
 
-            // Render scene from spot light POV
+            // Render scene from this spot light POV into its tile
             for (auto MeshComp : Context.StaticMeshes)
             {
                 if (!MeshComp || !MeshComp->IsVisible()) continue;
                 RenderPrimitive(MeshComp);
             }
+
+            // First one cached for backwards compatibility (used by StaticMeshPass)
+            if (idx == 0)
+            {
+                SpotLightView = V;
+                SpotLightProj = P;
+            }
+
+            // Compute atlas transform with 1 texel inner padding to avoid bleeding
+            const float sx = tileW / atlasW;
+            const float sy = tileH / atlasH;
+            const float ox = (tileW * tileX) / atlasW;
+            const float oy = (tileH * tileY) / atlasH;
+            const float padU = 1.5f / atlasW; // ~1.5 texels
+            const float padV = 1.5f / atlasH;
+
+            FSpotShadowAtlasEntry entry;
+            entry.View = V;
+            entry.Proj = P;
+            entry.AtlasScale = FVector2(std::max(0.0f, sx - 2.0f * padU), std::max(0.0f, sy - 2.0f * padV));
+            entry.AtlasOffset = FVector2(ox + padU, oy + padV);
+            // Write at the same index used by clustered lighting for this spotlight
+            Entries[idx] = entry;
+        }
+
+        // Upload entries to GPU structured buffer
+        if (SpotShadowAtlasStructuredBuffer)
+        {
+            FRenderResourceFactory::UpdateStructuredBuffer(SpotShadowAtlasStructuredBuffer, Entries);
         }
     }
     
@@ -1351,5 +1402,7 @@ void FUpdateLightBufferPass::Release()
     
     // Light Camera 상수 버퍼 해제
     SafeRelease(LightCameraConstantBuffer);
+    SafeRelease(SpotShadowAtlasSRV);
+    SafeRelease(SpotShadowAtlasStructuredBuffer);
 }
 

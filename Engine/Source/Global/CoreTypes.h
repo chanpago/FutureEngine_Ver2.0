@@ -210,6 +210,25 @@ struct FSpotShadowConstants
     uint32  bUseVSM;        // 0/1
     uint32  bUsePCF;        // 0/1
     float   Padding;        // align to 16 bytes
+
+    // Spot shadow atlas (for multiple spotlights)
+    // Entire atlas texture size (pixels)
+    FVector2 SpotAtlasTextureSize; // (AtlasWidth, AtlasHeight)
+    // Per-tile size (pixels)
+    FVector2 SpotTileSize;         // (TileWidth, TileHeight)
+    // Atlas grid layout
+    uint32  SpotAtlasCols;         // number of columns in atlas
+    uint32  SpotAtlasRows;         // number of rows in atlas
+    FVector2 SpotAtlasPadding;     // unused, keep 16-byte alignment
+};
+
+// Per-spot shadow atlas entry uploaded as a structured buffer
+struct FSpotShadowAtlasEntry
+{
+    FMatrix View;         // spot light view matrix
+    FMatrix Proj;         // spot light projection matrix
+    FVector2 AtlasScale;  // scale to map local [0,1] UV into atlas
+    FVector2 AtlasOffset; // offset to map local [0,1] UV into atlas
 };
 struct FPointShadowConstants
 {

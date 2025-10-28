@@ -585,12 +585,17 @@ void UDeviceResources::CreateSpotShadowMapResources()
         return;
     }
 
-    const UINT ShadowMapSize = 1024;
+    // Configure a fixed 4x4 atlas of 1024x1024 tiles for spotlights
+    const UINT TileSize = 1024;
+    const UINT AtlasCols = 4;
+    const UINT AtlasRows = 4;
+    const UINT ShadowMapWidth = TileSize * AtlasCols;
+    const UINT ShadowMapHeight = TileSize * AtlasRows;
 
     // Depth Texture for Spot Shadow
     D3D11_TEXTURE2D_DESC DepthDesc = {};
-    DepthDesc.Width = ShadowMapSize;
-    DepthDesc.Height = ShadowMapSize;
+    DepthDesc.Width = ShadowMapWidth;
+    DepthDesc.Height = ShadowMapHeight;
     DepthDesc.MipLevels = 1;
     DepthDesc.ArraySize = 1;
     DepthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;

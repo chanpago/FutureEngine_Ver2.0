@@ -9,8 +9,6 @@
 #include "Component/Public/DirectionalLightComponent.h"
 #include "Component/Public/SpotLightComponent.h"
 
-
-
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
 	: FRenderPass(InPipeline, InConstantBufferCamera, InConstantBufferModel), VS(InVS), PS(InPS), InputLayout(InLayout), DS(InDS)
@@ -178,53 +176,67 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			{
 				// if (SL && SL->GetCastShadows())
 				// {
-					SpotCaster = SL; break;
+				SpotCaster = SL;
 				// }
-			}
-			if (SpotCaster)
-			{
-				FSpotShadowConstants SpotConsts = {};
-				SpotConsts.LightView = LightBufferPass->GetSpotLightViewMatrix();
-				SpotConsts.LightProj = LightBufferPass->GetSpotLightProjectionMatrix();
-				SpotConsts.SpotPosition = SpotCaster->GetWorldLocation();
-				SpotConsts.SpotRange = SpotCaster->GetAttenuationRadius();
-				SpotConsts.SpotDirection = SpotCaster->GetForwardVector().GetNormalized();
-				SpotConsts.OuterCone = SpotCaster->GetOuterConeAngle();
-				SpotConsts.InnerCone = SpotCaster->GetInnerConeAngle();
-				SpotConsts.ShadowMapSize = FVector2(1024.0f, 1024.0f);
-				SpotConsts.ShadowBias = 0.005f;
-				SpotConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
-				SpotConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
-
-				FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferSpotShadow, SpotConsts);
-				Pipeline->SetConstantBuffer(7, EShaderType::PS, ConstantBufferSpotShadow);
-
-				ID3D11ShaderResourceView* SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
-				Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
-
-				// Sampler (reuse same policy)
-				if (FilterType == EShadowFilterType::None)
+				if (SpotCaster)
 				{
-					Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
-				}
-				else if (FilterType == EShadowFilterType::PCF)
-				{
-					Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
-				}
-				else if (FilterType == EShadowFilterType::VSM)
-				{
-					Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+					FSpotShadowConstants SpotConsts = {};
+					SpotConsts.LightView = LightBufferPass->GetSpotLightViewMatrix();
+					SpotConsts.LightProj = LightBufferPass->GetSpotLightProjectionMatrix();
+					SpotConsts.SpotPosition = SpotCaster->GetWorldLocation();
+					SpotConsts.SpotRange = SpotCaster->GetAttenuationRadius();
+					SpotConsts.SpotDirection = SpotCaster->GetForwardVector().GetNormalized();
+					SpotConsts.OuterCone = SpotCaster->GetOuterConeAngle();
+					SpotConsts.InnerCone = SpotCaster->GetInnerConeAngle();
+					SpotConsts.ShadowMapSize = FVector2(1024.0f, 1024.0f);
+					SpotConsts.ShadowBias = 0.005f;
+					SpotConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
+					SpotConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
+
+					// Atlas info (must match DeviceResources atlas configuration)
+					const float tileW = LightBufferPass->GetSpotTileWidth();
+					const float tileH = LightBufferPass->GetSpotTileHeight();
+					const uint32 cols = LightBufferPass->GetSpotAtlasCols();
+					const uint32 rows = LightBufferPass->GetSpotAtlasRows();
+					SpotConsts.SpotAtlasTextureSize = FVector2(tileW * cols, tileH * rows);
+					SpotConsts.SpotTileSize = FVector2(tileW, tileH);
+					SpotConsts.SpotAtlasCols = cols;
+					SpotConsts.SpotAtlasRows = rows;
+
+					FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferSpotShadow, SpotConsts);
+					Pipeline->SetConstantBuffer(7, EShaderType::PS, ConstantBufferSpotShadow);
+
+					ID3D11ShaderResourceView* SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
+					Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
+
+					// Bind atlas entries buffer (t13)
+					Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());
+
+					// Sampler (reuse same policy)
+					if (FilterType == EShadowFilterType::None)
+					{
+						Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+					}
+					else if (FilterType == EShadowFilterType::PCF)
+					{
+						Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+					}
+					else if (FilterType == EShadowFilterType::VSM)
+					{
+						Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+					}
 				}
 			}
 		}
-		else
-		{
-		     // No spot shadow caster: clear bindings to avoid invalid SRV/CB
-		     Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
-		     Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
-		}
+        else
+        {
+            // No spot shadow caster: clear bindings to avoid sampling invalid SRV/CB
+            Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
+            Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
+            Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
+        }
 		
-		 // Bind point light shadow (single caster for now)
+		// Bind point light shadow (single caster for now)
 		if (!Context.PointLights.empty())
 		{
 			UPointLightComponent* PointCaster = nullptr;
@@ -254,7 +266,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
 				const auto& DeviceResources = Renderer.GetDeviceResources();
 				ID3D11ShaderResourceView* PointSRV = DeviceResources->GetPointShadowMapColorSRV();
-				Pipeline->SetShaderResourceView(13, EShaderType::PS, PointSRV);
+				Pipeline->SetShaderResourceView(14, EShaderType::PS, PointSRV);
 
 				// Bind samplers for point light shadow
 				if (FilterType == EShadowFilterType::PCF)
@@ -273,15 +285,17 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		}
 		else
 		{
-			Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
+			Pipeline->SetShaderResourceView(14, EShaderType::PS, nullptr);
 			Pipeline->SetConstantBuffer(8, EShaderType::PS, nullptr);
 		}	
-}
-		
+	}
+
+
 	/**
 	* @todo Find a better way to reduce depdency upon Renderer class.
 	* @note How about introducing methods like BeginPass(), EndPass() to set up and release pass specific state?
 	*/
+
 	// +-+ RTVS SETUP +-+
 	const auto& DeviceResources = Renderer.GetDeviceResources();
 	ID3D11RenderTargetView* RTV = nullptr;
