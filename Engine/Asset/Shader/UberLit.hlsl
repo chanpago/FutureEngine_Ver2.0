@@ -124,7 +124,15 @@ cbuffer ShadowMapConstants : register(b6)
     uint bUseCSM;
     float2 pad;
 };
-
+cbuffer PointShadowConstants : register(b8)
+{
+    float3 LightPos;
+    float FarPlane;
+    float ShadowBias;
+    uint bUseVSM_Point;
+    uint bUsePCF_Point;
+    int ShadowMapIndex;
+};
 StructuredBuffer<int> PointLightIndices : register(t6);
 StructuredBuffer<int> SpotLightIndices : register(t7);
 StructuredBuffer<FPointLightInfo> PointLightInfos : register(t8);
@@ -596,8 +604,6 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     // Fetch per-spot view/proj and atlas transform
     FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
 
-    // Fetch per-spot view/proj and atlas transform
-    FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
 
     // Transform world position to spot light clip space
     float4 clip = mul(float4(worldPos, 1.0f), entry.View);
