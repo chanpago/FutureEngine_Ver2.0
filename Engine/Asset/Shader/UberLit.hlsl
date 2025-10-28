@@ -590,7 +590,8 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
 
     float invW = rcp(clip.w);
     float2 uv = float2(clip.x * invW, clip.y * invW) * 0.5f + 0.5f;
-    uv.y = 0.5f - (clip.y * invW) * 0.5f; // DirectX UV: flip Y
+    // DirectX UV: flip Y
+    uv.y = 1.0f - uv.y;
 
     // Guard against bleeding by shrinking within the tile by ~1 texel
     uint atlasW, atlasH;
@@ -605,10 +606,52 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
         return 1.0f;
 
     float currentDepth = saturate(clip.z * invW);
-    
-    // Use explicit LOD to avoid gradient use in dynamic loops
+    // float bias = SpotShadowBias; // CPU sets default; could be exposed per-light
+
+    float bias = 0.0001f;
+
+    // PCF path (3x3) using hardware comparison sampler
+    if (SpotUsePCF != 0)
+    {
+        float shadow = 0.0f;
+        // One texel in atlas UV space
+        float2 texel = atlasTexel;
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            [unroll]
+            for (int y = -1; y <= 1; ++y)
+            {
+                float2 o = float2(x, y) * texel;
+                shadow += SpotShadowMapTexture.SampleCmpLevelZero(SamplerPCF, uvAtlas + o, currentDepth - bias);
+            }
+        }
+        return shadow / 9.0f;
+    }
+
+    // VSM path using precomputed moments (R32G32_FLOAT)
+    if (SpotUseVSM != 0)
+    {
+        // Sample moments without derivatives to allow dynamic loops
+        float2 Moments = SpotShadowMapTexture.SampleLevel(SamplerLinearClamp, uvAtlas, 0).rg;
+
+        // Chebyshev upper bound
+        static const float VSM_MinVariance = 1e-5f;
+        static const float VSM_BleedReduction = 0.2f;
+
+        float z = saturate(currentDepth - bias);
+        float m1 = Moments.x;
+        float m2 = Moments.y;
+        float variance = max(m2 - m1 * m1, VSM_MinVariance);
+        float d = z - m1;
+        float pMax = saturate(variance / (variance + d * d));
+        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+        return visibility;
+    }
+
+    // Default: binary comparison using regular sampler
     float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uvAtlas, 0).r;
-    return (currentDepth - 0.0001f) > sd ? 0.0f : 1.0f;
+    return (currentDepth - bias) > sd ? 0.0f : 1.0f;
 }
 
 // Safe Normalize Util Functions
@@ -933,7 +976,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
     // 3. Point Lights
     uint LightIndicesOffset = GetLightIndicesOffset(Input.WorldPosition);
     uint PointLightCount = GetPointLightCount(LightIndicesOffset);
-    for (uint i = 0; i < PointLightCount ; i++)
+    [loop] for (uint i = 0; i < PointLightCount ; i++)
     {
         FPointLightInfo PointLight = GetPointLight(LightIndicesOffset + i);
         ADD_ILLUM(Illumination, CalculatePointLight(PointLight, N, Input.WorldPosition, ViewWorldLocation));
@@ -941,7 +984,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
     
     // 4. Spot Lights
     uint SpotLightCount = GetSpotLightCount(LightIndicesOffset);
-    for (uint j = 0; j < SpotLightCount ; j++)
+    [loop] for (uint j = 0; j < SpotLightCount ; j++)
     {
         // Fetch global index and info
         uint SpotIndex = SpotLightIndices[LightIndicesOffset + j];
