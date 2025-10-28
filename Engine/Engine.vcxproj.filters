@@ -46,6 +46,12 @@
     <FxCompile Include="Asset\Shader\TextureVS.hlsl">
       <Filter>Asset\Shader</Filter>
     </FxCompile>
+    <FxCompile Include="Asset\Shader\GizmoShader.hlsl">
+      <Filter>Asset\Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Asset\Shader\ShadowMap.hlsl">
+      <Filter>Asset\Shader</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\Utility\Private\ScopeCycleCounter.cpp">
@@ -500,6 +506,7 @@
     <ClCompile Include="Source\Optimization\Private\ViewVolumeCuller.cpp">
       <Filter>Source\Optimization\Private</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Render\RenderPass\Private\UpdateLightBufferPass.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\Global\BVH.h">
@@ -1004,6 +1011,7 @@
     <ClInclude Include="Source\Optimization\Public\ViewVolumeCuller.h">
       <Filter>Source\Optimization\Public</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Render\RenderPass\Public\UpdateLightBufferPass.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Asset\Shader\ClusteredRendering.hlsl">

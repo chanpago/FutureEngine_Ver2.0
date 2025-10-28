@@ -51,16 +51,27 @@ float4 mainPS(PS_INPUT input) : SV_TARGET
     float3 N = normalize(input.worldNormal);
 
     // Directional Light
-    float3 lightDir = normalize(float3(0.4, 0.6, -1.0));
+    float3 lightDir = normalize(float3(0.4f, 0.6f, -0.8f));
 
     // Lambert
     float NdotL = saturate(dot(N, lightDir));
-    float diffuse = 0.4 + 0.6 * NdotL;
-
+    
     // base color
     float4 baseColor = lerp(input.color, totalColor, totalColor.a);
-
+    
+    // Temporarily hardcode a soft shadow for the directional arrow
+    float finalAmbient;
+    if (distance(baseColor.rgb, float3(0.95, 0.95, 0.95)) < 0.01)
+    {
+        finalAmbient = 0.75f;
+    }
+    else
+    {
+        finalAmbient = 0.4f;
+    }
+    
     // diffuse
+    float diffuse = finalAmbient + (1.0f - finalAmbient) * NdotL;
     float4 finalColor = baseColor * diffuse;
 
     return finalColor;
