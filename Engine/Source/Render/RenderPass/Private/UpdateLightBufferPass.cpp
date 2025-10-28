@@ -193,8 +193,6 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
     PointCubeIndexCPU.clear();
     const float zn = 0.1f;
 
-    const D3D11_VIEWPORT vp = PointShadowViewport; // per-face viewport
-
     // For each selected point light, render 6 faces
     for (UINT li = 0, cubeIdx = 0; li < usedCubes; ++li, ++cubeIdx)
     {
@@ -203,6 +201,15 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
 
         const FVector eye = PL->GetWorldLocation();
         const float zf = std::max(zn + 0.1f, PL->GetAttenuationRadius());
+
+        // Get shadow resolution scale from light component and create scaled viewport
+        float resolutionScale = PL->GetShadowResolutionScale();
+        // Clamp to valid range (0.25 to 2.0 to prevent extreme values)
+        resolutionScale = std::clamp(resolutionScale, 0.25f, 2.0f);
+
+        D3D11_VIEWPORT vp = PointShadowViewport;
+        vp.Width = PointShadowViewport.Width * resolutionScale;
+        vp.Height = PointShadowViewport.Height * resolutionScale;
 
         // perspective matrix (row-vector LH)
         auto PerspectiveRowLH = [&](float fovY, float aspect, float zn_, float zf_) {

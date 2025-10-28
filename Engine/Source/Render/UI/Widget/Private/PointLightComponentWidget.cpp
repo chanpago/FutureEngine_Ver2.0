@@ -143,8 +143,76 @@ void UPointLightComponentWidget::RenderWidget()
     {
         ImGui::SetTooltip("거리에 따라 밝기가 줄어드는 속도를 조절합니다.\n값이 클수록 감소가 더 급격합니다.");
     }
-    
+
     ImGui::PopStyleColor(3);
+
+    ImGui::Separator();
+
+    // Shadow Settings Section
+    if (ImGui::CollapsingHeader("Shadow Settings", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+
+        // Shadow Resolution Scale
+        float ShadowResolutionScale = PointLightComponent->GetShadowResolutionScale();
+        if (ImGui::SliderFloat("Shadow Resolution Scale", &ShadowResolutionScale, 0.25f, 2.0f, "%.2f"))
+        {
+            PointLightComponent->SetShadowwResolutionScale(ShadowResolutionScale);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우맵 해상도 배율\n0.25 = 256x256, 0.5 = 512x512\n1.0 = 1024x1024 (기본)\n1.5 = 1536x1536, 2.0 = 2048x2048\n\n주의: 현재 구조상 1.0 이상은 클리핑 발생 가능!");
+        }
+
+        // Display current resolution
+        const float baseResolution = 1024.0f;
+        float currentResolution = baseResolution * ShadowResolutionScale;
+        ImGui::Text("Current Shadow Resolution: %.0f x %.0f", currentResolution, currentResolution);
+
+        // Warning if scale > 1.0
+        if (ShadowResolutionScale > 1.0f)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Warning: Scale > 1.0 may cause clipping!");
+            ImGui::TextWrapped("GPU texture is fixed at 1024x1024. Viewport larger than texture will be clipped.");
+        }
+
+        // Shadow Bias
+        float ShadowBias = PointLightComponent->GetShadowBias();
+        if (ImGui::DragFloat("Shadow Bias", &ShadowBias, 0.0001f, 0.0f, 0.01f, "%.4f"))
+        {
+            PointLightComponent->SetShadowBias(ShadowBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 깊이 바이어스\n섀도우 아크네(그림자 얼룩) 방지\n기본값: 0.001");
+        }
+
+        // Shadow Slope Bias
+        float ShadowSlopeBias = PointLightComponent->GetShadowSlopeBias();
+        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 10.0f, "%.2f"))
+        {
+            PointLightComponent->SetShadowSlopeBias(ShadowSlopeBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 경사 바이어스\nPSM(Perspective Shadow Maps) 사용 시\n표면 각도에 따른 바이어스 조절");
+        }
+
+        // Shadow Sharpen
+        float ShadowSharpen = PointLightComponent->GetShadowSharpen();
+        if (ImGui::DragFloat("Shadow Sharpen", &ShadowSharpen, 0.01f, 0.0f, 1.0f, "%.2f"))
+        {
+            PointLightComponent->SetShadowSharpen(ShadowSharpen);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 엣지 샤프닝\n그림자 경계를 더 선명하게");
+        }
+
+        ImGui::PopStyleColor(3);
+    }
 
     ImGui::Separator();
 
