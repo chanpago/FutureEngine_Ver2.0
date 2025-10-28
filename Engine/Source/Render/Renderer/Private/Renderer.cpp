@@ -148,12 +148,19 @@ void URenderer::CreateDepthStencilState()
 	DecalDescription.StencilEnable = FALSE;
 	GetDevice()->CreateDepthStencilState(&DecalDescription, &DecalDepthStencilState);
 
-
 	// Disabled Depth Stencil (Depth X, Stencil X)
 	D3D11_DEPTH_STENCIL_DESC DisabledDescription = {};
 	DisabledDescription.DepthEnable = FALSE;
 	DisabledDescription.StencilEnable = FALSE;
 	GetDevice()->CreateDepthStencilState(&DisabledDescription, &DisabledDepthStencilState);
+
+	// Gizmo Depth State (Depth O, Depth Write O, Func=LESS_EQUAL)
+	D3D11_DEPTH_STENCIL_DESC GizmoDepthDescription = {};
+	GizmoDepthDescription.DepthEnable = TRUE;
+	GizmoDepthDescription.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+	GizmoDepthDescription.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+	GizmoDepthDescription.StencilEnable = FALSE;
+	GetDevice()->CreateDepthStencilState(&GizmoDepthDescription, &GizmoDepthState);
 }
 
 void URenderer::CreateBlendState()
@@ -661,6 +668,7 @@ void URenderer::ReleaseDepthStencilState()
 	SafeRelease(DefaultDepthStencilState);
 	SafeRelease(DecalDepthStencilState);
 	SafeRelease(DisabledDepthStencilState);
+	SafeRelease(GizmoDepthState);
 	if (GetDeviceContext())
 	{
 		GetDeviceContext()->OMSetRenderTargets(0, nullptr, nullptr);
@@ -917,7 +925,7 @@ void URenderer::RenderEditorPrimitive(const FEditorPrimitive& InPrimitive, const
         InPrimitive.InputLayout ? InPrimitive.InputLayout : DefaultInputLayout,
         InPrimitive.VertexShader ? InPrimitive.VertexShader : DefaultVertexShader,
 		FRenderResourceFactory::GetRasterizerState(InRenderState),
-        InPrimitive.bShouldAlwaysVisible ? DisabledDepthStencilState : DefaultDepthStencilState,
+        InPrimitive.bShouldAlwaysVisible ? GizmoDepthState : DefaultDepthStencilState,
         InPrimitive.PixelShader ? InPrimitive.PixelShader : DefaultPixelShader,
         nullptr,
         InPrimitive.Topology

@@ -25,6 +25,7 @@ void UDeviceResources::Create(HWND InWindowHandle)
 	CreateSceneColorTarget();
 	CreateShadowMapResources();  // TODO: 임시 비활성화
 	CreateFactories();
+	CreateGizmoDepthBuffer();
 }
 
 void UDeviceResources::Release()
@@ -35,6 +36,7 @@ void UDeviceResources::Release()
 	ReleaseFrameBuffer();
 	ReleaseNormalBuffer();
 	ReleaseDepthBuffer();
+	ReleaseGizmoDepthBuffer();
 	ReleaseDeviceAndSwapChain();
 }
 
@@ -353,7 +355,35 @@ void UDeviceResources::ReleaseDepthBuffer()
 	}
 }
 
+void UDeviceResources::CreateGizmoDepthBuffer()
+{
+	ReleaseGizmoDepthBuffer(); // Ensure previous resources are released
 
+	D3D11_TEXTURE2D_DESC depthTexDesc = {};
+	depthTexDesc.Width = Width;
+	depthTexDesc.Height = Height;
+	depthTexDesc.MipLevels = 1;
+	depthTexDesc.ArraySize = 1;
+	depthTexDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthTexDesc.SampleDesc.Count = 1;
+	depthTexDesc.Usage = D3D11_USAGE_DEFAULT;
+	depthTexDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	HRESULT hr = Device->CreateTexture2D(&depthTexDesc, nullptr, &GizmoDepthTexture);
+	assert(SUCCEEDED(hr) && "Failed to create Gizmo Depth Texture!");
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Texture2D.MipSlice = 0;
+	hr = Device->CreateDepthStencilView(GizmoDepthTexture, &dsvDesc, &GizmoDSV);
+	assert(SUCCEEDED(hr) && "Failed to create Gizmo DSV!");
+}
+
+void UDeviceResources::ReleaseGizmoDepthBuffer()
+{
+	SafeRelease(GizmoDSV);
+	SafeRelease(GizmoDepthTexture);
+}
 
 void UDeviceResources::UpdateViewport(float InMenuBarHeight)
 {

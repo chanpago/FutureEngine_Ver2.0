@@ -17,6 +17,8 @@ public:
 	void ReleaseNormalBuffer();
 	void CreateDepthBuffer();
 	void ReleaseDepthBuffer();
+	void CreateGizmoDepthBuffer();
+	void ReleaseGizmoDepthBuffer();
 
 	// Scene Color Texture, rtv, srv
 	void CreateSceneColorTarget();
@@ -53,6 +55,9 @@ public:
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
 	ID3D11Texture2D* GetSceneColorTexture() const {return SceneColorTexture; }
 	
+	ID3D11Texture2D* GetGizmoDepthTexture() const { return GizmoDepthTexture; }
+	ID3D11DepthStencilView* GetGizmoDSV() const { return GizmoDSV; }
+
 	const D3D11_VIEWPORT& GetViewportInfo() const { return ViewportInfo; }
 	uint32 GetWidth() const { return Width; }
 	uint32 GetHeight() const { return Height; }
@@ -106,4 +111,7 @@ private:
 	// Direct2D/DirectWrite factories
 	ID2D1Factory* D2DFactory = nullptr;
 	IDWriteFactory* DWriteFactory = nullptr;
+
+	ID3D11Texture2D* GizmoDepthTexture = nullptr;
+	ID3D11DepthStencilView* GizmoDSV = nullptr;
 };
