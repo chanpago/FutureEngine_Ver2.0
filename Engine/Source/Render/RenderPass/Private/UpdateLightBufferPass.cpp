@@ -82,7 +82,8 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
 
     // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
     ID3D11ShaderResourceView* NullSRV = nullptr;
-    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);   // DirectionalShadowMapTexture (t10)
+    DeviceContext->PSSetShaderResources(11, 1, &NullSRV);   // CascadedShadowMapTexture (t11)
     UINT NumViewports = 1;
     D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
     DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
@@ -180,9 +181,23 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
     if (NumSpotLights > 0)
     {
         ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
-        DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
-        // Clear entire atlas once
-        DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        if (FilterType == EShadowFilterType::VSM)
+        {
+            ID3D11RenderTargetView* rtv = Renderer.GetDeviceResources()->GetSpotShadowMapColorRTV();
+            // Unbind SRV to avoid write conflict
+            ID3D11ShaderResourceView* NullSRV = nullptr;
+            DeviceContext->PSSetShaderResources(12, 1, &NullSRV);
+            DeviceContext->OMSetRenderTargets(1, &rtv, dsv);
+            const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+            DeviceContext->ClearRenderTargetView(rtv, ClearMoments);
+            DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
+        else
+        {
+            DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+            // Clear entire atlas once
+            DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
 
         // Prepare atlas math
         const float tileW = SpotShadowViewport.Width;
@@ -253,6 +268,13 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
                 if (!MeshComp || !MeshComp->IsVisible()) continue;
                 RenderPrimitive(MeshComp);
             }
+
+            // Optionally generate mips for VSM moments (if SRV exposes them)
+            // if (FilterType == EShadowFilterType::VSM)
+            // {
+            //     auto srv = Renderer.GetDeviceResources()->GetSpotShadowMapColorSRV();
+            //     DeviceContext->GenerateMips(srv);
+            // }
 
             // First one cached for backwards compatibility (used by StaticMeshPass)
             if (idx == 0)
@@ -1195,6 +1217,7 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
         if (!Camera) return;
 
         CalculateCascadeSplits(OutShadowData.CascadeSplits, Camera);
+        CascadedShadowMapConstants.CascadeSplits = OutShadowData.CascadeSplits;
         const float* pSplits = &OutShadowData.CascadeSplits.X;
 
         for (int i = 0; i < MAX_CASCADES; i++)

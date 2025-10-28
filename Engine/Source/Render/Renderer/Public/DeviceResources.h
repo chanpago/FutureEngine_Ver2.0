@@ -56,9 +56,11 @@ public:
 	ID3D11ShaderResourceView* GetDirectionalShadowMapColorSRV() const {return DirectionalShadowMapColorSRV; }
 	ID3D11Texture2D* GetDirectionalShadowMapColorTexture() const {return DirectionalShadowMapColorTexture; }
 
-	// Spot Light Shadow Map Getters
-	ID3D11DepthStencilView* GetSpotShadowMapDSV() const { return SpotShadowMapDSV; }
-	ID3D11ShaderResourceView* GetSpotShadowMapSRV() const { return SpotShadowMapSRV; }
+    // Spot Light Shadow Map Getters
+    ID3D11DepthStencilView* GetSpotShadowMapDSV() const { return SpotShadowMapDSV; }
+    ID3D11ShaderResourceView* GetSpotShadowMapSRV() const { return SpotShadowMapSRV; }
+    ID3D11RenderTargetView* GetSpotShadowMapColorRTV() const { return SpotShadowMapColorRTV; }
+    ID3D11ShaderResourceView* GetSpotShadowMapColorSRV() const { return SpotShadowMapColorSRV; }
 
 	// Point Light Shadow Map Getters
 	ID3D11RenderTargetView* GetPointShadowMapColorRTV(uint32 index) const { return PointShadowMapColorRTVs[index]; }
@@ -135,6 +137,10 @@ private:
 	ID3D11Texture2D* SpotShadowMapTexture = nullptr;
 	ID3D11DepthStencilView* SpotShadowMapDSV = nullptr;
 	ID3D11ShaderResourceView* SpotShadowMapSRV = nullptr;
+	// Spot Light Shadow Map (VSM color moments)
+	ID3D11Texture2D* SpotShadowMapColorTexture = nullptr;
+	ID3D11RenderTargetView* SpotShadowMapColorRTV = nullptr;
+	ID3D11ShaderResourceView* SpotShadowMapColorSRV = nullptr;
 
 	// CSM Resources
 	ID3D11Texture2D* CascadedShadowMapTexture = nullptr;

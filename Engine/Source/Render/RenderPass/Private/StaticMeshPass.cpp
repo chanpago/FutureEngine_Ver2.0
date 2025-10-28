@@ -46,7 +46,8 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
 	// +-+-+ BIND SHADOW MAP CONSTANT BUFFER AND SRV +-+-+
 	FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-	if (LightBufferPass && (Context.ShowFlags & EEngineShowFlags::SF_Shadow))
+	UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
+	if (LightBufferPass && Light && (Context.ShowFlags & EEngineShowFlags::SF_Shadow))
 	{
 		const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
 		const EShadowFilterType FilterType = Context.ShadowFilterType;
@@ -180,34 +181,17 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				// }
 				if (SpotCaster)
 				{
-					FSpotShadowConstants SpotConsts = {};
-					SpotConsts.LightView = LightBufferPass->GetSpotLightViewMatrix();
-					SpotConsts.LightProj = LightBufferPass->GetSpotLightProjectionMatrix();
-					SpotConsts.SpotPosition = SpotCaster->GetWorldLocation();
-					SpotConsts.SpotRange = SpotCaster->GetAttenuationRadius();
-					SpotConsts.SpotDirection = SpotCaster->GetForwardVector().GetNormalized();
-					SpotConsts.OuterCone = SpotCaster->GetOuterConeAngle();
-					SpotConsts.InnerCone = SpotCaster->GetInnerConeAngle();
-					SpotConsts.ShadowMapSize = FVector2(1024.0f, 1024.0f);
-					SpotConsts.ShadowBias = 0.005f;
-					SpotConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
-					SpotConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
-
-					// Atlas info (must match DeviceResources atlas configuration)
-					const float tileW = LightBufferPass->GetSpotTileWidth();
-					const float tileH = LightBufferPass->GetSpotTileHeight();
-					const uint32 cols = LightBufferPass->GetSpotAtlasCols();
-					const uint32 rows = LightBufferPass->GetSpotAtlasRows();
-					SpotConsts.SpotAtlasTextureSize = FVector2(tileW * cols, tileH * rows);
-					SpotConsts.SpotTileSize = FVector2(tileW, tileH);
-					SpotConsts.SpotAtlasCols = cols;
-					SpotConsts.SpotAtlasRows = rows;
-
-					FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferSpotShadow, SpotConsts);
-					Pipeline->SetConstantBuffer(7, EShaderType::PS, ConstantBufferSpotShadow);
-
-					ID3D11ShaderResourceView* SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
-					Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
+	                ID3D11ShaderResourceView* SpotSRV = nullptr;
+	                if (FilterType == EShadowFilterType::VSM)
+	                {
+	                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapColorSRV();
+	                }
+	                else
+	                {
+	                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
+	                }
+					
+	                Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
 
 					// Bind atlas entries buffer (t13)
 					Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());
@@ -233,7 +217,6 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
             // No spot shadow caster: clear bindings to avoid sampling invalid SRV/CB
             Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
             Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
-            Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
         }
 		
 		// Bind point light shadow (single caster for now)
