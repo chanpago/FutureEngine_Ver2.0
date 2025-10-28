@@ -426,3 +426,4 @@ WARP.md
 # Rider
 .idea/
 *.objbin
+/Engine/Source/Render/RenderPass/Private/StaticMeshPass.cpp

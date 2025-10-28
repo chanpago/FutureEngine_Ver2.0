@@ -80,9 +80,6 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
     UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
 
     // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
-    ID3D11ShaderResourceView* NullSRV = nullptr;
-    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);   // DirectionalShadowMapTexture (t10)
-    DeviceContext->PSSetShaderResources(11, 1, &NullSRV);   // CascadedShadowMapTexture (t11)
     UINT NumViewports = 1;
     D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
     DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
@@ -1168,14 +1165,31 @@ void FUpdateLightBufferPass::SetShadowRenderTarget(EShadowProjectionType ProjTyp
 {
     const auto& Renderer = URenderer::GetInstance();
     auto DeviceContext = Renderer.GetDeviceContext();
+    
+    // Always Unbind
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);   // DirectionalShadowMapTexture (t10)
+    DeviceContext->PSSetShaderResources(11, 1, &NullSRV);   // CascadedShadowMapTexture (t11)
 
     if (ProjType == EShadowProjectionType::CSM)
     {
-        ID3D11DepthStencilView* CurrentDsv = Renderer.GetInstance().GetDeviceResources()->GetCascadedShadowMapDSV(CascadeIndex);
-        DeviceContext->OMSetRenderTargets(0, nullptr, CurrentDsv);
-        DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        ID3D11DepthStencilView* CurrentDsv = Renderer.GetDeviceResources()->GetCascadedShadowMapDSV(CascadeIndex);
 
-        // TODO: VSM + CSM... (get color RTV from array)
+        // CSM + filter (get color RTV from array)
+        if (FilterType == EShadowFilterType::VSM)
+        {
+            ID3D11RenderTargetView* CurrentRtv = Renderer.GetDeviceResources()->GetCascadedShadowMapColorRTV(CascadeIndex);
+            DeviceContext->OMSetRenderTargets(1, &CurrentRtv, CurrentDsv);
+
+            const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };   // VSM Default
+            DeviceContext->ClearRenderTargetView(CurrentRtv, ClearMoments);
+            DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
+        else  // PCF or None
+        {
+            DeviceContext->OMSetRenderTargets(0, nullptr, CurrentDsv);
+            DeviceContext->ClearDepthStencilView(CurrentDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
     }
     else
     {
@@ -1185,8 +1199,6 @@ void FUpdateLightBufferPass::SetShadowRenderTarget(EShadowProjectionType ProjTyp
             ID3D11DepthStencilView* ShadowDSV = Renderer.GetDeviceResources()->GetDirectionalShadowMapDSV();
             ID3D11RenderTargetView* ShadowRTV = Renderer.GetDeviceResources()->GetDirectionalShadowMapColorRTV();
             // Unbind SRV from PS slot to avoid read-write hazard when binding RTV
-            ID3D11ShaderResourceView* NullSRV = nullptr;
-            DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
             DeviceContext->OMSetRenderTargets(1, &ShadowRTV, ShadowDSV);  // 색상 정보는 ShadowRTV에, 깊이 정보는 ShadowDSV에 기록, GPU는 두개의 목적지를 모두 출력 대상으로 인식
             const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };   // VSM Default
             DeviceContext->ClearRenderTargetView(ShadowRTV, ClearMoments);
