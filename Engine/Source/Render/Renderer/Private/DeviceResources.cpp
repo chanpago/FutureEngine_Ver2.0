@@ -751,6 +751,21 @@ void UDeviceResources::CreatePointShadowCubeResources()
         return;
     }
 
+    // SRV as Texture2DArray (for PCF sampling via SampleCmp)
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv2D = {};
+    srv2D.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    srv2D.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    srv2D.Texture2DArray.MostDetailedMip = 0;
+    srv2D.Texture2DArray.MipLevels = 1;
+    srv2D.Texture2DArray.FirstArraySlice = 0;
+    srv2D.Texture2DArray.ArraySize = ArraySize;
+    hr = Device->CreateShaderResourceView(PointShadowCubeTexture, &srv2D, &PointShadow2DArraySRV);
+    if (FAILED(hr))
+    {
+        UE_LOG_ERROR("Failed to create Point Shadow 2DArray SRV");
+        // Not fatal; PCF path for point lights will be disabled
+    }
+
     // Create a DSV for each face slice
     for (UINT slice = 0; slice < ArraySize; ++slice)
     {
@@ -774,6 +789,7 @@ void UDeviceResources::CreatePointShadowCubeResources()
 void UDeviceResources::ReleasePointShadowCubeResources()
 {
     SafeRelease(PointShadowCubeSRV);
+    SafeRelease(PointShadow2DArraySRV);
     for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
     {
         SafeRelease(PointShadowCubeDSVs[i]);

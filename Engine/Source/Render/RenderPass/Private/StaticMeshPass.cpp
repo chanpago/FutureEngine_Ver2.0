@@ -232,6 +232,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		ID3D11ShaderResourceView* CubeSRV = Renderer.GetDeviceResources()->GetPointShadowCubeSRV();
 		Pipeline->SetShaderResourceView(14, EShaderType::PS, CubeSRV);
 		Pipeline->SetShaderResourceView(15, EShaderType::PS, LightBufferPass ? LightBufferPass->GetPointShadowCubeIndexSRV() : nullptr);
+		Pipeline->SetShaderResourceView(16, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadow2DArraySRV());
 	}
 
 	const auto& DeviceResources = Renderer.GetDeviceResources();

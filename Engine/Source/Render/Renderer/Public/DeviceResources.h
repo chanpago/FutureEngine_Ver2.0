@@ -63,10 +63,11 @@ public:
     ID3D11RenderTargetView* GetSpotShadowMapColorRTV() const { return SpotShadowMapColorRTV; }
     ID3D11ShaderResourceView* GetSpotShadowMapColorSRV() const { return SpotShadowMapColorSRV; }
 
-	// Point Light Shadow Cube Getters
-	ID3D11ShaderResourceView* GetPointShadowCubeSRV() const { return PointShadowCubeSRV; }
-	ID3D11DepthStencilView* GetPointShadowCubeDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowCubeDSVs[SliceIndex] : nullptr; }
+    // Point Light Shadow Cube Getters
+    ID3D11ShaderResourceView* GetPointShadowCubeSRV() const { return PointShadowCubeSRV; }
+    ID3D11DepthStencilView* GetPointShadowCubeDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowCubeDSVs[SliceIndex] : nullptr; }
     UINT GetMaxPointShadowLights() const { return MaxPointShadowLights; }
+    ID3D11ShaderResourceView* GetPointShadow2DArraySRV() const { return PointShadow2DArraySRV; }
     // Create a per-face SRV to a single cube face for preview/debug
     bool CreatePointShadowFaceSRV(UINT CubeIndex, UINT FaceIndex, ID3D11ShaderResourceView** OutSRV) const;
 
@@ -149,6 +150,7 @@ private:
 	static const UINT MaxPointShadowLights = 16; // capacity for shadowed point lights
 	ID3D11Texture2D* PointShadowCubeTexture = nullptr; // Array size = 6 * MaxPointShadowLights
 	ID3D11ShaderResourceView* PointShadowCubeSRV = nullptr; // SRV as TextureCubeArray
+	ID3D11ShaderResourceView* PointShadow2DArraySRV = nullptr; // SRV as Texture2DArray (for PCF)
 	ID3D11DepthStencilView* PointShadowCubeDSVs[6 * MaxPointShadowLights] = { nullptr }; // DSV per face slice
 	UINT PointShadowCubeDSVsCount = 0;
 };

@@ -145,6 +145,8 @@ StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 // Point light shadow cube array and mapping (multiple point lights)
 TextureCubeArray PointShadowCubes : register(t14);
 StructuredBuffer<uint> PointShadowCubeIndices : register(t15);
+// Alternate 2D array view for PCF sampling
+Texture2DArray PointShadow2DArray : register(t16);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -334,6 +336,21 @@ inline float ShadowVSM2DArray(Texture2DArray MomentsTex, SamplerState Samp, floa
 {
     float2 mom = MomentsTex.Sample(Samp, uvLayer).rg; // Biasing for arrays can be driver-limited; keep 0 bias
     return CalculateVSM(mom, currentDepth, mipBias);
+}
+
+// 2D array PCF (3x3)
+inline float ShadowPCF2DArray(Texture2DArray DepthTex, SamplerComparisonState Comp, float3 uvLayer, float currentDepth)
+{
+    uint w, h, layers; DepthTex.GetDimensions(w, h, layers);
+    float2 texel = 1.0 / float2(max(1u,w), max(1u,h));
+    float sum = 0.0;
+    [unroll] for (int dy = -1; dy <= 1; ++dy)
+    [unroll] for (int dx = -1; dx <= 1; ++dx)
+    {
+        float2 o = float2(dx, dy) * texel;
+        sum += DepthTex.SampleCmpLevelZero(Comp, float3(uvLayer.xy + o, uvLayer.z), currentDepth - 0.0001f);
+    }
+    return sum / 9.0f;
 }
 
 // 반환: 가시도(1=조명 통과, 0=완전 그림자)
@@ -617,9 +634,25 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float3 dir = V / dist;
     float3 a = abs(dir);
     float3 F;
-    if (a.x >= a.y && a.x >= a.z) F = (dir.x > 0.0f) ? float3(1,0,0) : float3(-1,0,0);
-    else if (a.y >= a.z)          F = (dir.y > 0.0f) ? float3(0,1,0) : float3(0,-1,0);
-    else                          F = (dir.z > 0.0f) ? float3(0,0,1) : float3(0,0,-1);
+    int faceIndex;
+    float2 uv;
+    if (a.x >= a.y && a.x >= a.z)
+    {
+        if (dir.x > 0.0f) { F = float3(1,0,0);  uv = float2(-dir.z,  dir.y) / a.x; faceIndex = 0; }
+        else               { F = float3(-1,0,0); uv = float2( dir.z,  dir.y) / a.x; faceIndex = 1; }
+    }
+    else if (a.y >= a.z)
+    {
+        if (dir.y > 0.0f) { F = float3(0,1,0);  uv = float2( dir.x, -dir.z) / a.y; faceIndex = 2; }
+        else               { F = float3(0,-1,0); uv = float2( dir.x,  dir.z) / a.y; faceIndex = 3; }
+    }
+    else
+    {
+        if (dir.z > 0.0f) { F = float3(0,0,1);  uv = float2( dir.x,  dir.y) / a.z; faceIndex = 4; }
+        else               { F = float3(0,0,-1); uv = float2(-dir.x,  dir.y) / a.z; faceIndex = 5; }
+    }
+    uv = uv * 0.5f + 0.5f;
+    uv.y = 1.0f - uv.y; // DirectX UV flip
 
     // Reconstruct depth value used by the depth buffer for a 90° LH perspective with zn=0.1 and zf=info.Range
     const float zn = 0.1f;
@@ -629,6 +662,14 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float D = -zn * zf / (zf - zn);
     float currentDepth = C + D / z_eye;
 
+    // PCF path over 2D array SRV (uses hardware comparison sampler)
+    if (bUsePCF != 0)
+    {
+        uint layer = cubeIdx * 6 + (uint)faceIndex;
+        return ShadowPCF2DArray(PointShadow2DArray, SamplerPCF, float3(uv, layer), currentDepth);
+    }
+
+    // Default: binary compare from cube SRV
     float sd = PointShadowCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
     return (currentDepth - 0.0001f <= sd) ? 1.0f : 0.0f;
 }
