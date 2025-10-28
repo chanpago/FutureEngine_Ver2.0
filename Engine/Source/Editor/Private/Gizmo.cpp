@@ -24,6 +24,9 @@ UGizmo::UGizmo()
 	* @brief Translation Setting
 	*/
 	const float ScaleT = TranslateCollisionConfig.Scale;
+	Primitives[0].VertexShader = URenderer::GetInstance().GetGizmoVertexShader();
+	Primitives[0].PixelShader = URenderer::GetInstance().GetGizmoPixelShader();
+	Primitives[0].InputLayout = URenderer::GetInstance().GetGizmoInputLayout();
 	Primitives[0].VertexBuffer = ResourceManager.GetVertexbuffer(EPrimitiveType::Arrow);
 	Primitives[0].NumVertices = ResourceManager.GetNumVertices(EPrimitiveType::Arrow);
 	Primitives[0].Topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -186,7 +189,12 @@ FVector4 UGizmo::ColorFor(EGizmoDirection InAxis) const
 	//UE_LOG("InAxis: %d, Idx: %d, Dir: %d, base color: %.f, %.f, %.f, bHighLight: %d", InAxis, Idx, GizmoDirection, BaseColor.X, BaseColor.Y, BaseColor.Z, bIsHighlight);
 
 	if (bIsDragging)
-		return BaseColor;
+	{
+		if (bIsHighlight)
+			return FVector4(1, 1, 0, 1);
+		else
+			return BaseColor;
+	}
 	else
 		return Paint;
 }

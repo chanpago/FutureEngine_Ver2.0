@@ -64,6 +64,7 @@ void URenderer::Init(HWND InWindowHandle)
 	CreateGizmoShader();
 	CreateClusteredRenderingGrid();
 	CreateShadowMapShader();
+	CreateAxisGizmoShader();
 
 	//ViewportClient->InitializeLayout(DeviceResources->GetViewportInfo());
 
@@ -418,6 +419,19 @@ void URenderer::CreateShadowMapShader()
 	RegisterShaderReloadCache(ShaderPath, ShaderUsage::STATICMESH);
 }
 
+void URenderer::CreateAxisGizmoShader()
+{
+	TArray<D3D11_INPUT_ELEMENT_DESC> GizmoLayout =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FNormalVertex, Position), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FNormalVertex, Normal), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(FNormalVertex, Color), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(FNormalVertex, TexCoord), D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+	FRenderResourceFactory::CreateVertexShaderAndInputLayout(L"Asset/Shader/GizmoShader.hlsl", GizmoLayout, &AxisGizmoVertexShader, &AxisGizmoInputLayout);
+	FRenderResourceFactory::CreatePixelShader(L"Asset/Shader/GizmoShader.hlsl", &AxisGizmoPixelShader);
+}
+
 void URenderer::CreateClusteredRenderingGrid()
 {
 	const std::wstring ShaderFilePathString = L"Asset/Shader/ClusteredRenderingGrid.hlsl";
@@ -636,6 +650,10 @@ void URenderer::ReleaseDefaultShader()
 	SafeRelease(ClusteredRenderingGridInputLayout);
 	SafeRelease(ClusteredRenderingGridVS);
 	SafeRelease(ClusteredRenderingGridPS);
+
+	SafeRelease(AxisGizmoVertexShader);
+	SafeRelease(AxisGizmoPixelShader);
+	SafeRelease(AxisGizmoInputLayout);
 }
 
 void URenderer::ReleaseDepthStencilState()
