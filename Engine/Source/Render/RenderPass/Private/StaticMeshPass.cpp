@@ -204,8 +204,17 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 					FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferSpotShadow, SpotConsts);
 					Pipeline->SetConstantBuffer(7, EShaderType::PS, ConstantBufferSpotShadow);
 
-					ID3D11ShaderResourceView* SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
-					Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
+	                ID3D11ShaderResourceView* SpotSRV = nullptr;
+	                if (FilterType == EShadowFilterType::VSM)
+	                {
+	                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapColorSRV();
+	                }
+	                else
+	                {
+	                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
+	                }
+					
+	                Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
 
 					// Bind atlas entries buffer (t13)
 					Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());

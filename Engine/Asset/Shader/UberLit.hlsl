@@ -629,7 +629,25 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
         return shadow / 9.0f;
     }
 
-    // (Optional) VSM path for spotlights can be added later.
+    // VSM path using precomputed moments (R32G32_FLOAT)
+    if (SpotUseVSM != 0)
+    {
+        // Sample moments without derivatives to allow dynamic loops
+        float2 Moments = SpotShadowMapTexture.SampleLevel(SamplerLinearClamp, uvAtlas, 0).rg;
+
+        // Chebyshev upper bound
+        static const float VSM_MinVariance = 1e-5f;
+        static const float VSM_BleedReduction = 0.2f;
+
+        float z = saturate(currentDepth - bias);
+        float m1 = Moments.x;
+        float m2 = Moments.y;
+        float variance = max(m2 - m1 * m1, VSM_MinVariance);
+        float d = z - m1;
+        float pMax = saturate(variance / (variance + d * d));
+        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
+        return visibility;
+    }
 
     // Default: binary comparison using regular sampler
     float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uvAtlas, 0).r;
@@ -958,7 +976,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
     // 3. Point Lights
     uint LightIndicesOffset = GetLightIndicesOffset(Input.WorldPosition);
     uint PointLightCount = GetPointLightCount(LightIndicesOffset);
-    for (uint i = 0; i < PointLightCount ; i++)
+    [loop] for (uint i = 0; i < PointLightCount ; i++)
     {
         FPointLightInfo PointLight = GetPointLight(LightIndicesOffset + i);
         ADD_ILLUM(Illumination, CalculatePointLight(PointLight, N, Input.WorldPosition, ViewWorldLocation));
@@ -966,7 +984,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
     
     // 4. Spot Lights
     uint SpotLightCount = GetSpotLightCount(LightIndicesOffset);
-    for (uint j = 0; j < SpotLightCount ; j++)
+    [loop] for (uint j = 0; j < SpotLightCount ; j++)
     {
         // Fetch global index and info
         uint SpotIndex = SpotLightIndices[LightIndicesOffset + j];

@@ -634,6 +634,53 @@ void UDeviceResources::CreateSpotShadowMapResources()
         ReleaseSpotShadowMapResources();
         return;
     }
+
+    // Create VSM color moments atlas texture (R32G32_FLOAT), same atlas layout
+    {
+        D3D11_TEXTURE2D_DESC ColorDesc = {};
+        ColorDesc.Width = ShadowMapWidth;
+        ColorDesc.Height = ShadowMapHeight;
+        ColorDesc.MipLevels = 0; // allow full mip chain
+        ColorDesc.ArraySize = 1;
+        ColorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
+        ColorDesc.SampleDesc.Count = 1;
+        ColorDesc.Usage = D3D11_USAGE_DEFAULT;
+        ColorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        ColorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+
+        hr = Device->CreateTexture2D(&ColorDesc, nullptr, &SpotShadowMapColorTexture);
+        if (FAILED(hr))
+        {
+            UE_LOG_ERROR("Failed to create Spot Shadow Map Color Texture");
+            ReleaseSpotShadowMapResources();
+            return;
+        }
+
+        D3D11_RENDER_TARGET_VIEW_DESC RTVDesc = {};
+        RTVDesc.Format = ColorDesc.Format;
+        RTVDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+        RTVDesc.Texture2D.MipSlice = 0;
+        hr = Device->CreateRenderTargetView(SpotShadowMapColorTexture, &RTVDesc, &SpotShadowMapColorRTV);
+        if (FAILED(hr))
+        {
+            UE_LOG_ERROR("Failed to create Spot Shadow Map Color RTV");
+            ReleaseSpotShadowMapResources();
+            return;
+        }
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC ColorSRVDesc = {};
+        ColorSRVDesc.Format = ColorDesc.Format;
+        ColorSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        ColorSRVDesc.Texture2D.MostDetailedMip = 0;
+        ColorSRVDesc.Texture2D.MipLevels = 1; // expose base level; mips optional
+        hr = Device->CreateShaderResourceView(SpotShadowMapColorTexture, &ColorSRVDesc, &SpotShadowMapColorSRV);
+        if (FAILED(hr))
+        {
+            UE_LOG_ERROR("Failed to create Spot Shadow Map Color SRV");
+            ReleaseSpotShadowMapResources();
+            return;
+        }
+    }
 }
 
 void UDeviceResources::ReleaseSpotShadowMapResources()
@@ -641,6 +688,9 @@ void UDeviceResources::ReleaseSpotShadowMapResources()
     SafeRelease(SpotShadowMapSRV);
     SafeRelease(SpotShadowMapDSV);
     SafeRelease(SpotShadowMapTexture);
+    SafeRelease(SpotShadowMapColorSRV);
+    SafeRelease(SpotShadowMapColorRTV);
+    SafeRelease(SpotShadowMapColorTexture);
 }
 
 /**
