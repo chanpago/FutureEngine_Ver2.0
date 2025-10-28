@@ -192,7 +192,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	                Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
 
 					// Bind atlas entries buffer (t13)
-					Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());
+				Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());
 
 					// Sampler (reuse same policy)
 					if (FilterType == EShadowFilterType::None)
@@ -216,6 +216,8 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
             Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
             Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
         }
+
+
 	}
 
 	/**
@@ -224,6 +226,14 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	*/
 
 	// +-+ RTVS SETUP +-+
+	// Bind point shadow resources regardless of directional/spot availability
+	{
+		FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
+		ID3D11ShaderResourceView* CubeSRV = Renderer.GetDeviceResources()->GetPointShadowCubeSRV();
+		Pipeline->SetShaderResourceView(14, EShaderType::PS, CubeSRV);
+		Pipeline->SetShaderResourceView(15, EShaderType::PS, LightBufferPass ? LightBufferPass->GetPointShadowCubeIndexSRV() : nullptr);
+	}
+
 	const auto& DeviceResources = Renderer.GetDeviceResources();
 	ID3D11RenderTargetView* RTV = nullptr;
 	RTV = Renderer.GetFXAA() 

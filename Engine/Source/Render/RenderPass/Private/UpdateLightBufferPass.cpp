@@ -52,6 +52,10 @@ FUpdateLightBufferPass::FUpdateLightBufferPass(UPipeline* InPipeline, ID3D11Buff
     // Create structured buffer for spot shadow atlas entries
     SpotShadowAtlasStructuredBuffer = FRenderResourceFactory::CreateStructuredBuffer<FSpotShadowAtlasEntry>(256);
     FRenderResourceFactory::CreateStructuredShaderResourceView(SpotShadowAtlasStructuredBuffer, &SpotShadowAtlasSRV);
+
+    // Point shadow cube index buffer (maps global point light index -> cube array index)
+    PointShadowCubeIndexStructuredBuffer = FRenderResourceFactory::CreateStructuredBuffer<uint32>(1024);
+    FRenderResourceFactory::CreateStructuredShaderResourceView(PointShadowCubeIndexStructuredBuffer, &PointShadowCubeIndexSRV);
 }
 
 FUpdateLightBufferPass::~FUpdateLightBufferPass()
@@ -65,6 +69,7 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
     //BakeShadowMap(Context);
     NewBakeShadowMap(Context);
     BakeSpotShadowMap(Context);
+    BakePointShadowMap(Context);
 }
 
 void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
@@ -127,6 +132,159 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
     DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
+
+void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
+{
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
+
+    auto& Renderer = URenderer::GetInstance();
+    auto* DeviceContext = Renderer.GetDeviceContext();
+
+    // Unbind the cube SRV if bound to avoid D3D warnings when writing
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(14, 1, &NullSRV);
+
+    // Pipeline for depth-only
+    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
+    FPipelineInfo PipelineInfo = {
+        ShadowMapInputLayout,
+        ShadowMapVS,
+        RS,
+        URenderer::GetInstance().GetDefaultDepthStencilState(),
+        URenderer::GetInstance().GetPixelShader(Context.ShadowFilterType), // Pixel shader (no output for depth-only)
+        nullptr,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    };
+    Pipeline->UpdatePipeline(PipelineInfo);
+
+    // Build filtered list of point lights (visible + enabled)
+    TArray<UPointLightComponent*> Points;
+    for (auto* PL : Context.PointLights)
+    {
+        if (PL && PL->GetVisible() && PL->GetLightEnabled())
+        {
+            Points.push_back(PL);
+        }
+    }
+
+    const UINT maxCubes = Renderer.GetDeviceResources()->GetMaxPointShadowLights();
+    const UINT usedCubes = (UINT)std::min<size_t>(Points.size(), maxCubes);
+
+    // Prepare mapping: global point light index -> cube index or 0xFFFFFFFF
+    // The ordering of Context.PointLights (filtered in LightPass) matches PointLightInfos buffer indices.
+    TArray<uint32> Mapping;
+    Mapping.resize(Context.PointLights.size());
+    // Initialize to invalid
+    for (size_t i = 0; i < Mapping.size(); ++i) Mapping[i] = 0xFFFFFFFFu;
+
+    // Bake
+    const float zn = 0.1f;
+
+    const D3D11_VIEWPORT vp = PointShadowViewport; // per-face viewport
+
+    // For each selected point light, render 6 faces
+    for (UINT li = 0, cubeIdx = 0; li < usedCubes; ++li, ++cubeIdx)
+    {
+        UPointLightComponent* PL = Points[li];
+        if (!PL) continue;
+
+        const FVector eye = PL->GetWorldLocation();
+        const float zf = std::max(zn + 0.1f, PL->GetAttenuationRadius());
+
+        // perspective matrix (row-vector LH)
+        auto PerspectiveRowLH = [&](float fovY, float aspect, float zn_, float zf_) {
+            FMatrix P = FMatrix::Identity();
+            const float yScale = 1.0f / tanf(fovY * 0.5f);
+            const float xScale = yScale / aspect;
+            P.Data[0][0] = xScale;
+            P.Data[1][1] = yScale;
+            P.Data[2][2] = zf_ / (zf_ - zn_);
+            P.Data[3][2] = -zn_ * zf_ / (zf_ - zn_);
+            P.Data[2][3] = 1.0f;
+            P.Data[3][3] = 0.0f;
+            return P;
+        };
+
+        // look-at matrix from forward and up (row-vector)
+        auto LookAtRow = [&](const FVector& Eye, const FVector& Fwd, const FVector& UpRef) {
+            const FVector f = Fwd.GetNormalized();
+            const FVector r = UpRef.Cross(f).GetNormalized();
+            const FVector u = f.Cross(r);
+            FMatrix V = FMatrix::Identity();
+            V.Data[0][0]=r.X; V.Data[0][1]=u.X; V.Data[0][2]=f.X;
+            V.Data[1][0]=r.Y; V.Data[1][1]=u.Y; V.Data[1][2]=f.Y;
+            V.Data[2][0]=r.Z; V.Data[2][1]=u.Z; V.Data[2][2]=f.Z;
+            V.Data[3][0]= -Eye.Dot(r);
+            V.Data[3][1]= -Eye.Dot(u);
+            V.Data[3][2]= -Eye.Dot(f);
+            return V;
+        };
+
+        const FMatrix P = PerspectiveRowLH(1.57079633f, 1.0f, zn, zf); // 90° fov
+
+        // 6 cube faces
+        const FVector fwd[6] = {
+            FVector( 1, 0, 0), FVector(-1, 0, 0),
+            FVector( 0, 1, 0), FVector( 0,-1, 0),
+            FVector( 0, 0, 1), FVector( 0, 0,-1)
+        };
+        const FVector upv[6] = {
+            FVector(0, 1, 0), FVector(0, 1, 0),
+            FVector(0, 0,-1), FVector(0, 0, 1),
+            FVector(0, 1, 0), FVector(0, 1, 0)
+        };
+
+        // Global index of this point in Context.PointLights (needed for mapping)
+        // Find first matching pointer; O(n) but small lists
+        uint32 globalIndex = 0xFFFFFFFFu;
+        for (uint32 gi = 0; gi < (uint32)Context.PointLights.size(); ++gi)
+        {
+            if (Context.PointLights[gi] == PL) { globalIndex = gi; break; }
+        }
+        if (globalIndex != 0xFFFFFFFFu)
+        {
+            Mapping[globalIndex] = cubeIdx; // map global point to cube index
+        }
+
+        for (int face = 0; face < 6; ++face)
+        {
+            const UINT sliceIndex = cubeIdx * 6 + face;
+            ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetPointShadowCubeDSV((int)sliceIndex);
+            if (!dsv) continue;
+
+            // Bind depth target and clear
+            DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+            DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            DeviceContext->RSSetViewports(1, &vp);
+
+            // Update constants for this face
+            FShadowMapConstants C = {};
+            C.LightViewP[0] = LookAtRow(eye, fwd[face], upv[face]);
+            C.LightProjP[0] = P;
+            C.LightViewPInv[0] = C.LightViewP[0].Inverse();
+            C.ShadowMapSize = FVector2(vp.Width, vp.Height);
+            C.bUsePSM = 0; C.bUseVSM = 0; C.bUsePCF = 0; C.bUseCSM = 0;
+            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, C);
+            Pipeline->SetConstantBuffer(6, EShaderType::VS, PSMConstantBuffer);
+
+            // Render all meshes
+            for (auto* MeshComp : Context.StaticMeshes)
+            {
+                if (!MeshComp || !MeshComp->IsVisible()) continue;
+                RenderPrimitive(MeshComp);
+            }
+        }
+    }
+
+    // Upload mapping to GPU
+    if (PointShadowCubeIndexStructuredBuffer)
+    {
+        FRenderResourceFactory::UpdateStructuredBuffer(PointShadowCubeIndexStructuredBuffer, Mapping);
+    }
+
+    // Restore bindings
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
 void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
@@ -1284,5 +1442,7 @@ void FUpdateLightBufferPass::Release()
     SafeRelease(LightCameraConstantBuffer);
     SafeRelease(SpotShadowAtlasSRV);
     SafeRelease(SpotShadowAtlasStructuredBuffer);
+    SafeRelease(PointShadowCubeIndexSRV);
+    SafeRelease(PointShadowCubeIndexStructuredBuffer);
 }
 

@@ -23,21 +23,23 @@ void UDeviceResources::Create(HWND InWindowHandle)
 	CreateNormalBuffer();
 	CreateDepthBuffer();
 	CreateSceneColorTarget();
-	CreateShadowMapResources();  // TODO: 임시 비활성화
-	CreateSpotShadowMapResources();
-	CreateCascadedShadowMap();
-	CreateFactories();
+    CreateShadowMapResources();  // TODO: 임시 비활성화
+    CreateSpotShadowMapResources();
+    CreatePointShadowCubeResources();
+    CreateCascadedShadowMap();
+    CreateFactories();
 }
 
 void UDeviceResources::Release()
 {
 	ReleaseFactories();
-	ReleaseCascadedShadowMap();
-	ReleaseShadowMapResources();
-	ReleaseSpotShadowMapResources();
-	ReleaseSceneColorTarget();
-	ReleaseFrameBuffer();
-	ReleaseNormalBuffer();
+    ReleaseCascadedShadowMap();
+    ReleaseShadowMapResources();
+    ReleaseSpotShadowMapResources();
+    ReleasePointShadowCubeResources();
+    ReleaseSceneColorTarget();
+    ReleaseFrameBuffer();
+    ReleaseNormalBuffer();
 	ReleaseDepthBuffer();
 	ReleaseDeviceAndSwapChain();
 }
@@ -691,6 +693,94 @@ void UDeviceResources::ReleaseSpotShadowMapResources()
     SafeRelease(SpotShadowMapColorSRV);
     SafeRelease(SpotShadowMapColorRTV);
     SafeRelease(SpotShadowMapColorTexture);
+}
+
+void UDeviceResources::CreatePointShadowCubeResources()
+{
+    // Create a Texture2D array with 6 slices per cube (TextureCubeArray semantics)
+    SafeRelease(PointShadowCubeSRV);
+    for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
+    {
+        SafeRelease(PointShadowCubeDSVs[i]);
+    }
+    PointShadowCubeDSVsCount = 0;
+    SafeRelease(PointShadowCubeTexture);
+
+    if (!Device)
+    {
+        UE_LOG_ERROR("CreatePointShadowCubeResources: Device is null!");
+        return;
+    }
+
+    const UINT FaceSize = 1024; // match PointShadowViewport; can be adjusted
+    const UINT NumCubes = MaxPointShadowLights;
+    const UINT ArraySize = 6 * NumCubes;
+
+    D3D11_TEXTURE2D_DESC texDesc = {};
+    texDesc.Width = FaceSize;
+    texDesc.Height = FaceSize;
+    texDesc.MipLevels = 1;
+    texDesc.ArraySize = ArraySize;
+    texDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+    texDesc.SampleDesc.Count = 1;
+    texDesc.Usage = D3D11_USAGE_DEFAULT;
+    texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+    texDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+
+    HRESULT hr = Device->CreateTexture2D(&texDesc, nullptr, &PointShadowCubeTexture);
+    if (FAILED(hr))
+    {
+        UE_LOG_ERROR("Failed to create Point Shadow Cube Texture");
+        ReleasePointShadowCubeResources();
+        return;
+    }
+
+    // SRV as TextureCubeArray
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
+    srvDesc.TextureCubeArray.MostDetailedMip = 0;
+    srvDesc.TextureCubeArray.MipLevels = 1;
+    srvDesc.TextureCubeArray.First2DArrayFace = 0;
+    srvDesc.TextureCubeArray.NumCubes = NumCubes;
+    hr = Device->CreateShaderResourceView(PointShadowCubeTexture, &srvDesc, &PointShadowCubeSRV);
+    if (FAILED(hr))
+    {
+        UE_LOG_ERROR("Failed to create Point Shadow Cube SRV");
+        ReleasePointShadowCubeResources();
+        return;
+    }
+
+    // Create a DSV for each face slice
+    for (UINT slice = 0; slice < ArraySize; ++slice)
+    {
+        D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+        dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+        dsvDesc.Texture2DArray.MipSlice = 0;
+        dsvDesc.Texture2DArray.FirstArraySlice = slice;
+        dsvDesc.Texture2DArray.ArraySize = 1;
+        hr = Device->CreateDepthStencilView(PointShadowCubeTexture, &dsvDesc, &PointShadowCubeDSVs[slice]);
+        if (FAILED(hr))
+        {
+            UE_LOG_ERROR("Failed to create Point Shadow Cube DSV");
+            ReleasePointShadowCubeResources();
+            return;
+        }
+        ++PointShadowCubeDSVsCount;
+    }
+}
+
+void UDeviceResources::ReleasePointShadowCubeResources()
+{
+    SafeRelease(PointShadowCubeSRV);
+    for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
+    {
+        SafeRelease(PointShadowCubeDSVs[i]);
+        PointShadowCubeDSVs[i] = nullptr;
+    }
+    PointShadowCubeDSVsCount = 0;
+    SafeRelease(PointShadowCubeTexture);
 }
 
 /**
