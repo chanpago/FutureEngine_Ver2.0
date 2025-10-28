@@ -886,6 +886,7 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
         if (!Camera) return;
 
         CalculateCascadeSplits(OutShadowData.CascadeSplits, Camera);
+        CascadedShadowMapConstants.CascadeSplits = OutShadowData.CascadeSplits;
         const float* pSplits = &OutShadowData.CascadeSplits.X;
 
         for (int i = 0; i < MAX_CASCADES; i++)
