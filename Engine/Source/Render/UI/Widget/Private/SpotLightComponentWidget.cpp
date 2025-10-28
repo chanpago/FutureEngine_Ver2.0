@@ -5,6 +5,8 @@
 #include "Level/Public/Level.h"
 #include "Component/Public/ActorComponent.h"
 #include "ImGui/imgui.h"
+#include "Render/Renderer/Public/Renderer.h"
+#include "Render/Renderer/Public/RenderResourceFactory.h"
 
 IMPLEMENT_CLASS(USpotLightComponentWidget, UWidget)
 
@@ -165,6 +167,139 @@ void USpotLightComponentWidget::RenderWidget()
     }
     
     ImGui::PopStyleColor(3);
+
+    // Shadow Map Preview
+    if (ImGui::CollapsingHeader("Shadow Map Preview"))
+    {
+        ID3D11ShaderResourceView* ShadowSRV = URenderer::GetInstance().GetDeviceResources()->GetSpotShadowMapSRV();
+        if (ShadowSRV)
+        {
+            // Controls
+            static int Size = 256;
+            ImGui::SliderInt("Size", &Size, 64, 1024);
+            static float MinDepth = 0.0f;
+            static float MaxDepth = 1.0f;
+            static float Gamma    = 1.2f;
+            static bool  Invert   = false;
+            ImGui::SliderFloat("Min", &MinDepth, 0.0f, 0.99f, "%.2f");
+            ImGui::SliderFloat("Max", &MaxDepth, 0.01f, 1.0f, "%.2f");
+            if (MinDepth > MaxDepth) MinDepth = MaxDepth;
+            ImGui::SliderFloat("Gamma", &Gamma, 0.2f, 3.0f, "%.2f");
+            ImGui::Checkbox("Invert", &Invert);
+
+            // Lazy-create preview resources
+            struct FDepthPreviewCB { float MinDepth; float MaxDepth; float Gamma; float Invert; };
+            struct FPreviewResources
+            {
+                ID3D11Texture2D* Tex = nullptr;
+                ID3D11RenderTargetView* RTV = nullptr;
+                ID3D11ShaderResourceView* SRV = nullptr;
+                ID3D11VertexShader* VS = nullptr;
+                ID3D11PixelShader* PS = nullptr;
+                ID3D11Buffer* CB = nullptr;
+                ID3D11SamplerState* Sampler = nullptr;
+                int W = 0, H = 0;
+            };
+            static FPreviewResources R;
+
+            auto Device = URenderer::GetInstance().GetDevice();
+            auto DC     = URenderer::GetInstance().GetDeviceContext();
+
+            auto DestroyPreview = [&]() {
+                SafeRelease(R.RTV); SafeRelease(R.SRV); SafeRelease(R.Tex);
+                SafeRelease(R.VS);  SafeRelease(R.PS);  SafeRelease(R.CB);
+                SafeRelease(R.Sampler);
+                R.W = R.H = 0;
+            };
+
+            // Recreate texture if size changed
+            if (R.W != Size || R.H != Size)
+            {
+                DestroyPreview();
+                D3D11_TEXTURE2D_DESC desc = {};
+                desc.Width = Size; desc.Height = Size;
+                desc.MipLevels = 1; desc.ArraySize = 1;
+                desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                desc.SampleDesc.Count = 1;
+                desc.Usage = D3D11_USAGE_DEFAULT;
+                desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+                if (SUCCEEDED(Device->CreateTexture2D(&desc, nullptr, &R.Tex)))
+                {
+                    Device->CreateRenderTargetView(R.Tex, nullptr, &R.RTV);
+                    Device->CreateShaderResourceView(R.Tex, nullptr, &R.SRV);
+                    R.W = R.H = Size;
+                }
+            }
+
+            // Create shaders/CB/sampler once
+            if (!R.VS || !R.PS)
+            {
+                FRenderResourceFactory::CreateVertexShaderAndInputLayout(L"Asset/Shader/DepthPreview.hlsl", {}, &R.VS, nullptr, "DepthPreviewVS");
+                FRenderResourceFactory::CreatePixelShader(L"Asset/Shader/DepthPreview.hlsl", &R.PS, "DepthPreviewPS");
+            }
+            if (!R.CB)
+            {
+                R.CB = FRenderResourceFactory::CreateConstantBuffer<FDepthPreviewCB>();
+            }
+            if (!R.Sampler)
+            {
+                R.Sampler = FRenderResourceFactory::CreateSamplerState(D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_TEXTURE_ADDRESS_CLAMP);
+            }
+
+            // Render to preview texture
+            if (R.RTV && R.VS && R.PS && R.CB && R.Sampler)
+            {
+                // Update constants
+                FDepthPreviewCB cb = { MinDepth, MaxDepth, Gamma, Invert ? 1.0f : 0.0f };
+                FRenderResourceFactory::UpdateConstantBufferData(R.CB, cb);
+
+                // Set RT
+                float clear[4] = {0,0,0,1};
+                // Save old targets and viewport
+                ID3D11RenderTargetView* oldRTV = nullptr;
+                ID3D11DepthStencilView* oldDSV = nullptr;
+                DC->OMGetRenderTargets(1, &oldRTV, &oldDSV);
+                UINT oldVPCount = 1; D3D11_VIEWPORT oldVP{}; DC->RSGetViewports(&oldVPCount, &oldVP);
+
+                DC->OMSetRenderTargets(1, &R.RTV, nullptr);
+                DC->ClearRenderTargetView(R.RTV, clear);
+
+                // Set viewport
+                D3D11_VIEWPORT vp = { 0, 0, (float)R.W, (float)R.H, 0.0f, 1.0f };
+                DC->RSSetViewports(1, &vp);
+
+                // Bind pipeline
+                DC->IASetInputLayout(nullptr);
+                DC->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                DC->VSSetShader(R.VS, nullptr, 0);
+                DC->PSSetShader(R.PS, nullptr, 0);
+                DC->PSSetSamplers(0, 1, &R.Sampler);
+                DC->PSSetShaderResources(0, 1, &ShadowSRV);
+                DC->PSSetConstantBuffers(0, 1, &R.CB);
+
+                // Draw fullscreen triangle
+                DC->Draw(3, 0);
+
+                // Unbind SRV from PS slot 0 to avoid warnings
+                ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+                DC->PSSetShaderResources(0, 1, nullSRV);
+
+                // Restore old targets and viewport
+                DC->OMSetRenderTargets(1, &oldRTV, oldDSV);
+                DC->RSSetViewports(oldVPCount, &oldVP);
+                SafeRelease(oldRTV);
+                SafeRelease(oldDSV);
+            }
+
+            // Show the processed preview
+            ImGui::Image((ImTextureID)R.SRV, ImVec2((float)Size, (float)Size));
+            ImGui::Text("Resolution: 1024 x 1024 (Depth)" );
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.8f,0.5f,0.5f,1.0f), "Shadow map SRV not available.");
+        }
+    }
 
     ImGui::Separator();
 }

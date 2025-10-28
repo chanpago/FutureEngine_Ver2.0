@@ -579,7 +579,7 @@ float CalculateSpotShadowFactor(float3 worldPos)
     
     // Use explicit LOD to avoid gradient use in dynamic loops
     float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uv, 0).r;
-    return (currentDepth) > sd ? 0.0f : 1.0f;
+    return (currentDepth - 0.0001f) > sd ? 0.0f : 1.0f;
 }
 
 // Safe Normalize Util Functions
