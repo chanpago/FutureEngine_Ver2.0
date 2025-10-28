@@ -34,12 +34,12 @@ struct FGizmoTranslationCollisionConfig
 struct FGizmoRotateCollisionConfig
 {
 	FGizmoRotateCollisionConfig()
-		: OuterRadius(1.0f), InnerRadius(0.9f), Scale(2.f) {
+		: OuterRadius(0.58f), InnerRadius(0.475f), Scale(1.f) {
 	}
 
-	float OuterRadius = {1.0f};  // 링 큰 반지름
-	float InnerRadius = {0.9f};  // 링 굵기 r
-	float Scale = {2.0f};
+	float OuterRadius = {0.58f};  // 링 큰 반지름
+	float InnerRadius = {0.475f};  // 링 굵기 r
+	float Scale = {1.0f};
 };
 
 class UGizmo : public UObject

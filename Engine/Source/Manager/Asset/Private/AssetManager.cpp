@@ -25,7 +25,7 @@ void UAssetManager::Initialize()
 	VertexDatas.emplace(EPrimitiveType::Torus, &VerticesTorus);
 	VertexDatas.emplace(EPrimitiveType::Arrow, &VerticesArrow);
 	VertexDatas.emplace(EPrimitiveType::CubeArrow, &VerticesCubeArrow);
-	VertexDatas.emplace(EPrimitiveType::Ring, &VerticesRing);
+	VertexDatas.emplace(EPrimitiveType::Ring, &VerticesQuarterCircle);
 	VertexDatas.emplace(EPrimitiveType::Line, &VerticesLine);
 	VertexDatas.emplace(EPrimitiveType::Sprite, &VerticesVerticalSquare);
 
@@ -43,7 +43,7 @@ void UAssetManager::Initialize()
 	VertexBuffers.emplace(EPrimitiveType::CubeArrow, FRenderResourceFactory::CreateVertexBuffer(
 		VerticesCubeArrow.data(), static_cast<int>(VerticesCubeArrow.size() * sizeof(FNormalVertex))));
 	VertexBuffers.emplace(EPrimitiveType::Ring, FRenderResourceFactory::CreateVertexBuffer(
-		VerticesRing.data(), static_cast<int>(VerticesRing.size() * sizeof(FNormalVertex))));
+		VerticesQuarterCircle.data(), static_cast<int>(VerticesQuarterCircle.size() * sizeof(FNormalVertex))));
 	VertexBuffers.emplace(EPrimitiveType::Line, FRenderResourceFactory::CreateVertexBuffer(
 		VerticesLine.data(), static_cast<int>(VerticesLine.size() * sizeof(FNormalVertex))));
 	VertexBuffers.emplace(EPrimitiveType::Sprite, FRenderResourceFactory::CreateVertexBuffer(
@@ -52,7 +52,7 @@ void UAssetManager::Initialize()
 	NumVertices.emplace(EPrimitiveType::Torus, static_cast<uint32>(VerticesTorus.size()));
 	NumVertices.emplace(EPrimitiveType::Arrow, static_cast<uint32>(VerticesArrow.size()));
 	NumVertices.emplace(EPrimitiveType::CubeArrow, static_cast<uint32>(VerticesCubeArrow.size()));
-	NumVertices.emplace(EPrimitiveType::Ring, static_cast<uint32>(VerticesRing.size()));
+	NumVertices.emplace(EPrimitiveType::Ring, static_cast<uint32>(VerticesQuarterCircle.size()));
 	NumVertices.emplace(EPrimitiveType::Line, static_cast<uint32>(VerticesLine.size()));
 	NumVertices.emplace(EPrimitiveType::Sprite, static_cast<uint32>(VerticesVerticalSquare.size()));
 	
