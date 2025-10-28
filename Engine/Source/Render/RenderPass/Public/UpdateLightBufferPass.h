@@ -1,5 +1,6 @@
 #pragma once
 #include "Render/RenderPass/Public/RenderPass.h"
+#include <unordered_map>
 
 class UDirectionalLightComponent;
 class USpotLightComponent;
@@ -76,6 +77,9 @@ private:
 public:
     ID3D11ShaderResourceView* GetPointShadowCubeIndexSRV() const { return PointShadowCubeIndexSRV; }
 
+    // CPU-side mapping for UI and debug
+    bool GetPointCubeIndexCPU(const UPointLightComponent* Comp, uint32& OutCubeIdx) const;
+
 	// Shadow Map Viewports
 	D3D11_VIEWPORT DirectionalShadowViewport;
 	D3D11_VIEWPORT SpotShadowViewport;
@@ -94,5 +98,8 @@ public:
 	FVector4 LightOrthoLTRB = FVector4(-1, 1, -1, 1);
 
 	// For Cascade
-	FShadowMapConstants CascadedShadowMapConstants;
+    FShadowMapConstants CascadedShadowMapConstants;
+
+    // CPU-side: map component pointer to cube index
+    std::unordered_map<const UPointLightComponent*, uint32> PointCubeIndexCPU;
 };

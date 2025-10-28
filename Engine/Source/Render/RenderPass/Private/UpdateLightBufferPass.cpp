@@ -189,7 +189,8 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
     // Initialize to invalid
     for (size_t i = 0; i < Mapping.size(); ++i) Mapping[i] = 0xFFFFFFFFu;
 
-    // Bake
+    // Bake and record CPU mapping
+    PointCubeIndexCPU.clear();
     const float zn = 0.1f;
 
     const D3D11_VIEWPORT vp = PointShadowViewport; // per-face viewport
@@ -255,7 +256,8 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
         }
         if (globalIndex != 0xFFFFFFFFu)
         {
-            Mapping[globalIndex] = cubeIdx; // map global point to cube index
+            Mapping[globalIndex] = cubeIdx; // map global point to cube index (GPU)
+            PointCubeIndexCPU[PL] = cubeIdx; // CPU map for UI/debug
         }
 
         for (int face = 0; face < 6; ++face)
@@ -298,6 +300,14 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
     DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
+
+bool FUpdateLightBufferPass::GetPointCubeIndexCPU(const UPointLightComponent* Comp, uint32& OutCubeIdx) const
+{
+    auto it = PointCubeIndexCPU.find(Comp);
+    if (it == PointCubeIndexCPU.end()) return false;
+    OutCubeIdx = it->second;
+    return true;
 }
 
 void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)

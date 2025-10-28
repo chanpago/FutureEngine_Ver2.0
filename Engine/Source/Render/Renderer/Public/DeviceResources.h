@@ -66,7 +66,9 @@ public:
 	// Point Light Shadow Cube Getters
 	ID3D11ShaderResourceView* GetPointShadowCubeSRV() const { return PointShadowCubeSRV; }
 	ID3D11DepthStencilView* GetPointShadowCubeDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowCubeDSVs[SliceIndex] : nullptr; }
-	UINT GetMaxPointShadowLights() const { return MaxPointShadowLights; }
+    UINT GetMaxPointShadowLights() const { return MaxPointShadowLights; }
+    // Create a per-face SRV to a single cube face for preview/debug
+    bool CreatePointShadowFaceSRV(UINT CubeIndex, UINT FaceIndex, ID3D11ShaderResourceView** OutSRV) const;
 
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
