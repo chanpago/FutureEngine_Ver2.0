@@ -590,7 +590,8 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
 
     float invW = rcp(clip.w);
     float2 uv = float2(clip.x * invW, clip.y * invW) * 0.5f + 0.5f;
-    uv.y = 0.5f - (clip.y * invW) * 0.5f; // DirectX UV: flip Y
+    // DirectX UV: flip Y
+    uv.y = 1.0f - uv.y;
 
     // Guard against bleeding by shrinking within the tile by ~1 texel
     uint atlasW, atlasH;
@@ -605,10 +606,34 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
         return 1.0f;
 
     float currentDepth = saturate(clip.z * invW);
-    
-    // Use explicit LOD to avoid gradient use in dynamic loops
+    // float bias = SpotShadowBias; // CPU sets default; could be exposed per-light
+
+    float bias = 0.0001f;
+
+    // PCF path (3x3) using hardware comparison sampler
+    if (SpotUsePCF != 0)
+    {
+        float shadow = 0.0f;
+        // One texel in atlas UV space
+        float2 texel = atlasTexel;
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            [unroll]
+            for (int y = -1; y <= 1; ++y)
+            {
+                float2 o = float2(x, y) * texel;
+                shadow += SpotShadowMapTexture.SampleCmpLevelZero(SamplerPCF, uvAtlas + o, currentDepth - bias);
+            }
+        }
+        return shadow / 9.0f;
+    }
+
+    // (Optional) VSM path for spotlights can be added later.
+
+    // Default: binary comparison using regular sampler
     float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uvAtlas, 0).r;
-    return (currentDepth - 0.0001f) > sd ? 0.0f : 1.0f;
+    return (currentDepth - bias) > sd ? 0.0f : 1.0f;
 }
 
 // Safe Normalize Util Functions
