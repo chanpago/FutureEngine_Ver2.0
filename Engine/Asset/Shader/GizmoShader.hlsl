@@ -7,11 +7,12 @@ cbuffer constants : register(b0)
 
 cbuffer PerFrame : register(b1)
 {
-    row_major float4x4 View; // View Matrix Calculation of MVP Matrix
-    row_major float4x4 Projection; // Projection Matrix Calculation of MVP Matrix
+    row_major float4x4 View;
+    row_major float4x4 Projection;
     float4 CameraPos;
 };
 
+// totalColor
 cbuffer PerFrame : register(b2)
 {
     float4 totalColor;
@@ -27,20 +28,19 @@ struct VS_INPUT
 struct PS_INPUT
 {
     float4 position : SV_POSITION;
-    float3 normal : NORMAL;
+    float3 worldNormal : NORMAL;
     float4 color : COLOR;
-    float3 viewDir : TEXCOORD0;
 };
 
 PS_INPUT mainVS(VS_INPUT input)
 {
     PS_INPUT output;
+
     float4 worldPos = mul(input.position, world);
     output.position = mul(worldPos, View);
     output.position = mul(output.position, Projection);
 
-    output.normal = mul(input.normal, (float3x3) world);
-    output.viewDir = normalize(CameraPos.xyz - worldPos.xyz);
+    output.worldNormal = normalize(mul(input.normal, (float3x3) world));
     output.color = input.color;
 
     return output;
@@ -48,16 +48,20 @@ PS_INPUT mainVS(VS_INPUT input)
 
 float4 mainPS(PS_INPUT input) : SV_TARGET
 {
-    float3 normal = normalize(input.normal);
-    float ndotv = saturate(dot(normal, input.viewDir));
-    
-    float4 finalColor = lerp(input.color, totalColor, totalColor.a);
-    
-    // Apply a simple rim light effect for better visibility
-    float rim = 1.0 - ndotv;
-    float4 rimColor = float4(1.0, 1.0, 1.0, 1.0) * pow(rim, 2.0);
+    float3 N = normalize(input.worldNormal);
 
-    finalColor += rimColor * 0.2;
+    // Directional Light
+    float3 lightDir = normalize(float3(0.4, 0.6, -1.0));
+
+    // Lambert
+    float NdotL = saturate(dot(N, lightDir));
+    float diffuse = 0.4 + 0.6 * NdotL;
+
+    // base color
+    float4 baseColor = lerp(input.color, totalColor, totalColor.a);
+
+    // diffuse
+    float4 finalColor = baseColor * diffuse;
 
     return finalColor;
 }
