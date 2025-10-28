@@ -68,6 +68,9 @@ public:
     ID3D11DepthStencilView* GetPointShadowCubeDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowCubeDSVs[SliceIndex] : nullptr; }
     UINT GetMaxPointShadowLights() const { return MaxPointShadowLights; }
     ID3D11ShaderResourceView* GetPointShadow2DArraySRV() const { return PointShadow2DArraySRV; }
+    // Point VSM (moments) getters
+    ID3D11ShaderResourceView* GetPointShadowColorSRV() const { return PointShadowColorSRV; }
+    ID3D11RenderTargetView* GetPointShadowColorRTV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowColorRTVs[SliceIndex] : nullptr; }
     // Create a per-face SRV to a single cube face for preview/debug
     bool CreatePointShadowFaceSRV(UINT CubeIndex, UINT FaceIndex, ID3D11ShaderResourceView** OutSRV) const;
 
@@ -153,4 +156,9 @@ private:
 	ID3D11ShaderResourceView* PointShadow2DArraySRV = nullptr; // SRV as Texture2DArray (for PCF)
 	ID3D11DepthStencilView* PointShadowCubeDSVs[6 * MaxPointShadowLights] = { nullptr }; // DSV per face slice
 	UINT PointShadowCubeDSVsCount = 0;
+
+	// Point VSM (moments) resources
+	ID3D11Texture2D* PointShadowColorTexture = nullptr; // R32G32_FLOAT moments, array
+	ID3D11RenderTargetView* PointShadowColorRTVs[6 * MaxPointShadowLights] = { nullptr };
+	ID3D11ShaderResourceView* PointShadowColorSRV = nullptr; // SRV as Texture2DArray
 };

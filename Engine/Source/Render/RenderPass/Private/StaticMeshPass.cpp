@@ -229,10 +229,10 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	// Bind point shadow resources regardless of directional/spot availability
 	{
 		FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-		ID3D11ShaderResourceView* CubeSRV = Renderer.GetDeviceResources()->GetPointShadowCubeSRV();
-		Pipeline->SetShaderResourceView(14, EShaderType::PS, CubeSRV);
+		Pipeline->SetShaderResourceView(14, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadowCubeSRV());
 		Pipeline->SetShaderResourceView(15, EShaderType::PS, LightBufferPass ? LightBufferPass->GetPointShadowCubeIndexSRV() : nullptr);
 		Pipeline->SetShaderResourceView(16, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadow2DArraySRV());
+		Pipeline->SetShaderResourceView(17, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadowColorSRV());
 	}
 
 	const auto& DeviceResources = Renderer.GetDeviceResources();

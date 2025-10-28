@@ -784,12 +784,69 @@ void UDeviceResources::CreatePointShadowCubeResources()
         }
         ++PointShadowCubeDSVsCount;
     }
+
+    // Create VSM color moments texture (R32G32_FLOAT), array, RTV per slice, SRV as Texture2DArray
+    {
+        D3D11_TEXTURE2D_DESC colorDesc = {};
+        colorDesc.Width = FaceSize;
+        colorDesc.Height = FaceSize;
+        colorDesc.MipLevels = 0; // allow full mip chain
+        colorDesc.ArraySize = ArraySize;
+        colorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
+        colorDesc.SampleDesc.Count = 1;
+        colorDesc.Usage = D3D11_USAGE_DEFAULT;
+        colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        colorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+        hr = Device->CreateTexture2D(&colorDesc, nullptr, &PointShadowColorTexture);
+        if (FAILED(hr))
+        {
+            UE_LOG_ERROR("Failed to create Point Shadow Moments Texture");
+            // Not fatal for non-VSM paths
+        }
+        if (SUCCEEDED(hr))
+        {
+            for (UINT slice = 0; slice < ArraySize; ++slice)
+            {
+                D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+                rtvDesc.Format = colorDesc.Format;
+                rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+                rtvDesc.Texture2DArray.MipSlice = 0;
+                rtvDesc.Texture2DArray.FirstArraySlice = slice;
+                rtvDesc.Texture2DArray.ArraySize = 1;
+                HRESULT hrRTV = Device->CreateRenderTargetView(PointShadowColorTexture, &rtvDesc, &PointShadowColorRTVs[slice]);
+                if (FAILED(hrRTV))
+                {
+                    UE_LOG_ERROR("Failed to create Point Shadow Moments RTV");
+                    // Continue to try others
+                }
+            }
+
+            D3D11_SHADER_RESOURCE_VIEW_DESC srvDescC = {};
+            srvDescC.Format = colorDesc.Format;
+            srvDescC.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+            srvDescC.Texture2DArray.MostDetailedMip = 0;
+            srvDescC.Texture2DArray.MipLevels = -1; // all mips
+            srvDescC.Texture2DArray.FirstArraySlice = 0;
+            srvDescC.Texture2DArray.ArraySize = ArraySize;
+            HRESULT hrSRV = Device->CreateShaderResourceView(PointShadowColorTexture, &srvDescC, &PointShadowColorSRV);
+            if (FAILED(hrSRV))
+            {
+                UE_LOG_ERROR("Failed to create Point Shadow Moments SRV");
+            }
+        }
+    }
 }
 
 void UDeviceResources::ReleasePointShadowCubeResources()
 {
     SafeRelease(PointShadowCubeSRV);
     SafeRelease(PointShadow2DArraySRV);
+    SafeRelease(PointShadowColorSRV);
+    for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
+    {
+        SafeRelease(PointShadowColorRTVs[i]);
+        PointShadowColorRTVs[i] = nullptr;
+    }
     for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
     {
         SafeRelease(PointShadowCubeDSVs[i]);
@@ -797,6 +854,7 @@ void UDeviceResources::ReleasePointShadowCubeResources()
     }
     PointShadowCubeDSVsCount = 0;
     SafeRelease(PointShadowCubeTexture);
+    SafeRelease(PointShadowColorTexture);
 }
 
 bool UDeviceResources::CreatePointShadowFaceSRV(UINT CubeIndex, UINT FaceIndex, ID3D11ShaderResourceView** OutSRV) const

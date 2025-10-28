@@ -266,9 +266,25 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
             ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetPointShadowCubeDSV((int)sliceIndex);
             if (!dsv) continue;
 
-            // Bind depth target and clear
-            DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
-            DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            // Select RTs based on filter (VSM writes moments to color RT)
+            if (FilterType == EShadowFilterType::VSM)
+            {
+                ID3D11RenderTargetView* rtv = Renderer.GetDeviceResources()->GetPointShadowColorRTV((int)sliceIndex);
+                ID3D11ShaderResourceView* NullSRVs[2] = { nullptr, nullptr };
+                // Unbind possibly bound SRVs (depth/moments) to avoid hazards
+                DeviceContext->PSSetShaderResources(16, 1, &NullSRVs[0]);
+                DeviceContext->PSSetShaderResources(17, 1, &NullSRVs[1]);
+                DeviceContext->OMSetRenderTargets(1, &rtv, dsv);
+                const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+                DeviceContext->ClearRenderTargetView(rtv, ClearMoments);
+                DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            }
+            else
+            {
+                // Depth-only
+                DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+                DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            }
             DeviceContext->RSSetViewports(1, &vp);
 
             // Update constants for this face
@@ -287,6 +303,13 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
                 if (!MeshComp || !MeshComp->IsVisible()) continue;
                 RenderPrimitive(MeshComp);
             }
+        }
+
+        // Generate mips for VSM moments if enabled
+        if (FilterType == EShadowFilterType::VSM)
+        {
+            auto srv = Renderer.GetDeviceResources()->GetPointShadowColorSRV();
+            if (srv) { DeviceContext->GenerateMips(srv); }
         }
     }
 

@@ -147,6 +147,8 @@ TextureCubeArray PointShadowCubes : register(t14);
 StructuredBuffer<uint> PointShadowCubeIndices : register(t15);
 // Alternate 2D array view for PCF sampling
 Texture2DArray PointShadow2DArray : register(t16);
+// Moments 2D array for VSM (R32G32_FLOAT)
+Texture2DArray PointShadowMoments2DArray : register(t17);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -661,6 +663,14 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float C = zf / (zf - zn);
     float D = -zn * zf / (zf - zn);
     float currentDepth = C + D / z_eye;
+
+    // VSM path over moments 2D array
+    if (bUseVSM != 0)
+    {
+        uint layer = cubeIdx * 6 + (uint)faceIndex;
+        static const float VSM_MipBias = 0.0f;
+        return ShadowVSM2DArray(PointShadowMoments2DArray, SamplerLinearClamp, float3(uv, layer), currentDepth, VSM_MipBias);
+    }
 
     // PCF path over 2D array SRV (uses hardware comparison sampler)
     if (bUsePCF != 0)
