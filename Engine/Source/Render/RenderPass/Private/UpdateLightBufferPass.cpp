@@ -136,23 +136,34 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
 
 void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
 {
+    // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
     if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
 
-    auto& Renderer = URenderer::GetInstance();
-    auto* DeviceContext = Renderer.GetDeviceContext();
+    // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
+    const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+    const EShadowFilterType FilterType = Context.ShadowFilterType;
+    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
 
-    // Unbind the cube SRV if bound to avoid D3D warnings when writing
+    // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
     ID3D11ShaderResourceView* NullSRV = nullptr;
     DeviceContext->PSSetShaderResources(14, 1, &NullSRV);
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    ID3D11RenderTargetView* OriginalRTVs = nullptr;  
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
 
-    // Pipeline for depth-only
+    // +-+-+ SET UP THE PIPELINE FOR SHADOW MAP RENDERING +-+-+
     ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
     FPipelineInfo PipelineInfo = {
         ShadowMapInputLayout,
         ShadowMapVS,
         RS,
         URenderer::GetInstance().GetDefaultDepthStencilState(),
-        URenderer::GetInstance().GetPixelShader(Context.ShadowFilterType), // Pixel shader (no output for depth-only)
+        URenderer::GetInstance().GetPixelShader(FilterType),  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
         nullptr,
         D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
     };
@@ -285,6 +296,8 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
 
     // Restore bindings
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    DeviceContext->RSSetViewports(1, &OriginalViewport);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
 }
 
 void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)

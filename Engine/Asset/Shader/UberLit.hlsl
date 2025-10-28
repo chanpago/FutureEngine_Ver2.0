@@ -661,7 +661,7 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float currentDepth = C + D / z_eye;
 
     float sd = PointShadowCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
-    return (currentDepth <= sd) ? 1.0f : 0.0f;
+    return (currentDepth - 0.0001f <= sd) ? 1.0f : 0.0f;
 }
 
 // Safe Normalize Util Functions
