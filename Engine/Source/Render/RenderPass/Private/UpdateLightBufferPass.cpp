@@ -81,7 +81,8 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
 
     // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
     ID3D11ShaderResourceView* NullSRV = nullptr;
-    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);
+    DeviceContext->PSSetShaderResources(10, 1, &NullSRV);   // DirectionalShadowMapTexture (t10)
+    DeviceContext->PSSetShaderResources(11, 1, &NullSRV);   // CascadedShadowMapTexture (t11)
     UINT NumViewports = 1;
     D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
     DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
@@ -1073,6 +1074,7 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
         if (!Camera) return;
 
         CalculateCascadeSplits(OutShadowData.CascadeSplits, Camera);
+        CascadedShadowMapConstants.CascadeSplits = OutShadowData.CascadeSplits;
         const float* pSplits = &OutShadowData.CascadeSplits.X;
 
         for (int i = 0; i < MAX_CASCADES; i++)
