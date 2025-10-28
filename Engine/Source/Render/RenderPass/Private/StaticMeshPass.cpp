@@ -265,7 +265,20 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				Pipeline->SetConstantBuffer(8, EShaderType::PS, ConstantBufferPointShadow);
 
 				const auto& DeviceResources = Renderer.GetDeviceResources();
-				ID3D11ShaderResourceView* PointSRV = DeviceResources->GetPointShadowMapColorSRV();
+
+				ID3D11ShaderResourceView* PointSRV = nullptr;
+
+				// FilterType에 따라 올바른 SRV를 선택합니다.
+				if (FilterType == EShadowFilterType::VSM)
+				{
+					PointSRV = DeviceResources->GetPointShadowMapColorSRV();
+				}
+				else // PCF 또는 기본 필터링
+				{
+					// 깊이 텍스처의 SRV를 가져오는 함수로 대체해야 합니다.
+					PointSRV = DeviceResources->GetPointShadowMapSRV();
+				}
+
 				Pipeline->SetShaderResourceView(14, EShaderType::PS, PointSRV);
 
 				// Bind samplers for point light shadow
