@@ -17,6 +17,8 @@ public:
 	void ReleaseNormalBuffer();
 	void CreateDepthBuffer();
 	void ReleaseDepthBuffer();
+	void CreateGizmoDepthBuffer();
+	void ReleaseGizmoDepthBuffer();
 
 	// Scene Color Texture, rtv, srv
 	void CreateSceneColorTarget();
@@ -77,6 +79,9 @@ public:
 	ID3D11DepthStencilView* GetCascadedShadowMapDSV(int CascadeIndex) const;
 	ID3D11RenderTargetView* GetCascadedShadowMapColorRTV(int CascadeIndex) const;
 	
+	ID3D11Texture2D* GetGizmoDepthTexture() const { return GizmoDepthTexture; }
+	ID3D11DepthStencilView* GetGizmoDSV() const { return GizmoDSV; }
+
 	const D3D11_VIEWPORT& GetViewportInfo() const { return ViewportInfo; }
 	uint32 GetWidth() const { return Width; }
 	uint32 GetHeight() const { return Height; }
@@ -147,6 +152,10 @@ private:
 	// Direct2D/DirectWrite factories
 	ID2D1Factory* D2DFactory = nullptr;
 	IDWriteFactory* DWriteFactory = nullptr;
+
+	// For Axis Gizmo mesh depth-test
+	ID3D11Texture2D* GizmoDepthTexture = nullptr;
+	ID3D11DepthStencilView* GizmoDSV = nullptr;
 
 	// Point Light Shadow Cube (TextureCubeArray depth)
 	static const UINT MaxPointShadowLights = 16; // capacity for shadowed point lights

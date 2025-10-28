@@ -68,7 +68,7 @@ PS_OUTPUT mainPS(PS_INPUT Input) : SV_TARGET
     }
     
     // Discard fully transparent pixels to prevent depth write
-    if (FinalColor.a < 0.01f)
+    if (FinalColor.a < 0.1f)
     {
         discard;
     }

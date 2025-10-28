@@ -58,6 +58,7 @@ public:
 	void CreateGizmoShader();
 	void CreateClusteredRenderingGrid();
 	void CreateShadowMapShader();
+	void CreateAxisGizmoShader();
 
 	// HotReload
 	/** @brief 런타임 중 VS, PS 셰이더 파일이 변경되었는지 확인하고, 변경된 파일을 사용하는 Shader Usage들을 반환합니다.*/
@@ -101,9 +102,13 @@ public:
 
 	ID3D11DepthStencilState* GetDefaultDepthStencilState() const { return DefaultDepthStencilState; }
 	ID3D11DepthStencilState* GetDisabledDepthStencilState() const { return DisabledDepthStencilState; }
+	ID3D11DepthStencilState* GetGizmoDepthState() const { return GizmoDepthState; }
 	ID3D11BlendState* GetAlphaBlendState() const { return AlphaBlendState; }
 	ID3D11Buffer* GetConstantBufferModels() const { return ConstantBufferModels; }
 	ID3D11Buffer* GetConstantBufferViewProj() const { return ConstantBufferViewProj; }
+	ID3D11VertexShader* GetGizmoVertexShader() const { return AxisGizmoVertexShader; }
+	ID3D11PixelShader* GetGizmoPixelShader() const { return AxisGizmoPixelShader; }
+	ID3D11InputLayout* GetGizmoInputLayout() const { return AxisGizmoInputLayout; }
 
 	void SetIsResizing(bool isResizing) { bIsResizing = isResizing; }
 
@@ -134,6 +139,7 @@ private:
 	ID3D11DepthStencilState* DefaultDepthStencilState = nullptr;
 	ID3D11DepthStencilState* DecalDepthStencilState = nullptr;
 	ID3D11DepthStencilState* DisabledDepthStencilState = nullptr;
+	ID3D11DepthStencilState* GizmoDepthState = nullptr;
 	ID3D11BlendState* AlphaBlendState = nullptr;
 	ID3D11BlendState* AdditiveBlendState = nullptr;
 	
@@ -197,6 +203,12 @@ private:
 	ID3D11PixelShader* FogPixelShader = nullptr;
 	ID3D11InputLayout* FogInputLayout = nullptr;
 	ID3D11SamplerState* DefaultSampler = nullptr;
+
+	// Gizmo Shaders
+	ID3D11VertexShader* AxisGizmoVertexShader = nullptr;
+	ID3D11PixelShader* AxisGizmoPixelShader = nullptr;
+	ID3D11InputLayout* AxisGizmoInputLayout = nullptr;
+	
 	ID3D11SamplerState* ShadowSampler = nullptr;  // Point+Clamp for shadow map
 	
 	uint32 Stride = 0;
