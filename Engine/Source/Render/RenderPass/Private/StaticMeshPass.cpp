@@ -7,6 +7,7 @@
 #include "Texture/Public/Texture.h"
 #include "Render/RenderPass/Public/UpdateLightBufferPass.h"
 #include "Component/Public/DirectionalLightComponent.h"
+#include "Component/Public/SpotLightComponent.h"
 
 FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstantBufferCamera, ID3D11Buffer* InConstantBufferModel,
 	ID3D11VertexShader* InVS, ID3D11PixelShader* InPS, ID3D11InputLayout* InLayout, ID3D11DepthStencilState* InDS)
@@ -14,6 +15,7 @@ FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstant
 {
 	ConstantBufferMaterial = FRenderResourceFactory::CreateConstantBuffer<FMaterialConstants>();
 	ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
+	ConstantBufferSpotShadow = FRenderResourceFactory::CreateConstantBuffer<FSpotShadowConstants>();
 }
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
@@ -164,6 +166,74 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
 			Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
 		}
+
+		// Bind spotlight shadow (single caster) alongside directional
+		if (!Context.SpotLights.empty())
+		{
+			USpotLightComponent* SpotCaster = nullptr;
+			for (auto* SL : Context.SpotLights)
+			{
+				// if (SL && SL->GetCastShadows())
+				// {
+				SpotCaster = SL;
+				// }
+				if (SpotCaster)
+				{
+					FSpotShadowConstants SpotConsts = {};
+					SpotConsts.LightView = LightBufferPass->GetSpotLightViewMatrix();
+					SpotConsts.LightProj = LightBufferPass->GetSpotLightProjectionMatrix();
+					SpotConsts.SpotPosition = SpotCaster->GetWorldLocation();
+					SpotConsts.SpotRange = SpotCaster->GetAttenuationRadius();
+					SpotConsts.SpotDirection = SpotCaster->GetForwardVector().GetNormalized();
+					SpotConsts.OuterCone = SpotCaster->GetOuterConeAngle();
+					SpotConsts.InnerCone = SpotCaster->GetInnerConeAngle();
+					SpotConsts.ShadowMapSize = FVector2(1024.0f, 1024.0f);
+					SpotConsts.ShadowBias = 0.005f;
+					SpotConsts.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1 : 0;
+					SpotConsts.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1 : 0;
+
+					// Atlas info (must match DeviceResources atlas configuration)
+					const float tileW = LightBufferPass->GetSpotTileWidth();
+					const float tileH = LightBufferPass->GetSpotTileHeight();
+					const uint32 cols = LightBufferPass->GetSpotAtlasCols();
+					const uint32 rows = LightBufferPass->GetSpotAtlasRows();
+					SpotConsts.SpotAtlasTextureSize = FVector2(tileW * cols, tileH * rows);
+					SpotConsts.SpotTileSize = FVector2(tileW, tileH);
+					SpotConsts.SpotAtlasCols = cols;
+					SpotConsts.SpotAtlasRows = rows;
+
+					FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferSpotShadow, SpotConsts);
+					Pipeline->SetConstantBuffer(7, EShaderType::PS, ConstantBufferSpotShadow);
+
+					ID3D11ShaderResourceView* SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
+					Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
+
+					// Bind atlas entries buffer (t13)
+					Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());
+
+					// Sampler (reuse same policy)
+					if (FilterType == EShadowFilterType::None)
+					{
+						Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+					}
+					else if (FilterType == EShadowFilterType::PCF)
+					{
+						Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+					}
+					else if (FilterType == EShadowFilterType::VSM)
+					{
+						Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+					}
+				}
+			}
+		}
+        else
+        {
+            // No spot shadow caster: clear bindings to avoid sampling invalid SRV/CB
+            Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
+            Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
+            Pipeline->SetConstantBuffer(7, EShaderType::PS, nullptr);
+        }
 	}
 
 	/**
@@ -294,4 +364,5 @@ void FStaticMeshPass::Release()
 {
 	SafeRelease(ConstantBufferMaterial);
 	SafeRelease(ConstantBufferShadowMap);
+	SafeRelease(ConstantBufferSpotShadow);
 }

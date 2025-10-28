@@ -48,6 +48,10 @@ FUpdateLightBufferPass::FUpdateLightBufferPass(UPipeline* InPipeline, ID3D11Buff
     PointShadowViewport.MaxDepth = 1.0f;
     PointShadowViewport.TopLeftX = 0.0f;
     PointShadowViewport.TopLeftY = 0.0f;
+
+    // Create structured buffer for spot shadow atlas entries
+    SpotShadowAtlasStructuredBuffer = FRenderResourceFactory::CreateStructuredBuffer<FSpotShadowAtlasEntry>(256);
+    FRenderResourceFactory::CreateStructuredShaderResourceView(SpotShadowAtlasStructuredBuffer, &SpotShadowAtlasSRV);
 }
 
 FUpdateLightBufferPass::~FUpdateLightBufferPass()
@@ -60,6 +64,7 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
     // Shadow Map 베이킹 실행
     //BakeShadowMap(Context);
     NewBakeShadowMap(Context);
+    BakeSpotShadowMap(Context);
 }
 
 void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
@@ -118,6 +123,168 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
         }
     }
 
+    // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
+    DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    DeviceContext->RSSetViewports(1, &OriginalViewport);
+    DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
+
+void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
+{
+    // +-+-+ RETURN IMMEDIATELY IF SHADOW RENDERING IS DISABLED +-+-+
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow)) { return; }
+    const auto& Renderer = URenderer::GetInstance();
+    auto DeviceContext = Renderer.GetDeviceContext();
+
+    // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
+    const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+    const EShadowFilterType FilterType = Context.ShadowFilterType;
+    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+
+    // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    DeviceContext->PSSetShaderResources(12, 1, &NullSRV);
+    UINT NumViewports = 1;
+    D3D11_VIEWPORT OriginalViewport;                    // Store the original viewport
+    DeviceContext->RSGetViewports(&NumViewports, &OriginalViewport);
+    ID3D11DepthStencilView* OriginalDSV = nullptr;
+    ID3D11RenderTargetView* OriginalRTVs = nullptr;  
+    DeviceContext->OMGetRenderTargets(1, &OriginalRTVs, &OriginalDSV);
+
+    // +-+-+ SET UP THE PIPELINE FOR SHADOW MAP RENDERING +-+-+
+    ID3D11RasterizerState* RS = FRenderResourceFactory::GetRasterizerState({ ECullMode::None, EFillMode::Solid });
+    FPipelineInfo PipelineInfo = {
+        ShadowMapInputLayout,
+        ShadowMapVS,
+        RS,
+        URenderer::GetInstance().GetDefaultDepthStencilState(),
+        URenderer::GetInstance().GetPixelShader(FilterType),  // ★ PS 바인드 (RenderPrimitive에서도 depth write 보장)
+        nullptr,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    };
+    Pipeline->UpdatePipeline(PipelineInfo);
+
+
+    // +-+-+ BAKE SPOTLIGHT SHADOW MAP (atlas for multiple casters) +-+-+
+    // Build filtered spot list matching LightPass ordering (visible + enabled)
+    TArray<USpotLightComponent*> FilteredSpots;
+    for (auto* SL : Context.SpotLights)
+    {
+        // TODO: also check SL->GetCastShadows()
+        if (SL && SL->GetVisible() && SL->GetLightEnabled())
+        {
+            FilteredSpots.push_back(SL);
+        }
+    }
+    const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
+    if (NumSpotLights > 0)
+    {
+        ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
+        DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+        // Clear entire atlas once
+        DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+        // Prepare atlas math
+        const float tileW = SpotShadowViewport.Width;
+        const float tileH = SpotShadowViewport.Height;
+        const float atlasW = tileW * static_cast<float>(SpotAtlasCols);
+        const float atlasH = tileH * static_cast<float>(SpotAtlasRows);
+
+        // Build entries to upload to structured buffer (index by global spot index)
+        TArray<FSpotShadowAtlasEntry> Entries;
+        Entries.resize(NumSpotLights);
+
+        // Render each spot into its atlas tile
+        for (int32 idx = 0; idx < NumSpotLights; ++idx)
+        {
+            USpotLightComponent* SpotCaster = FilteredSpots[idx];
+            if (!SpotCaster) { continue; }
+
+            // Compute view matrix from light basis
+            const FVector eye = SpotCaster->GetWorldLocation();
+            const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
+            const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+            const FVector right = tmpUp.Cross(fwd).GetNormalized();
+            const FVector up = fwd.Cross(right);
+
+            FMatrix V = FMatrix::Identity();
+            V.Data[0][0]=right.X; V.Data[0][1]=up.X; V.Data[0][2]=fwd.X;
+            V.Data[1][0]=right.Y; V.Data[1][1]=up.Y; V.Data[1][2]=fwd.Y;
+            V.Data[2][0]=right.Z; V.Data[2][1]=up.Z; V.Data[2][2]=fwd.Z;
+            V.Data[3][0]= -eye.Dot(right);
+            V.Data[3][1]= -eye.Dot(up);
+            V.Data[3][2]= -eye.Dot(fwd);
+
+            // Perspective projection (row-vector LH)
+            const float fov = std::max(0.001f, SpotCaster->GetOuterConeAngle()) * 2.0f;
+            const float aspect = 1.0f;
+            const float zn = 0.1f;
+            const float zf = std::max(zn + 0.1f, SpotCaster->GetAttenuationRadius());
+            FMatrix P = FMatrix::Identity();
+            const float yScale = 1.0f / tanf(fov * 0.5f);
+            const float xScale = yScale / aspect;
+            P.Data[0][0] = xScale;
+            P.Data[1][1] = yScale;
+            P.Data[2][2] = zf / (zf - zn);
+            P.Data[3][2] = -zn * zf / (zf - zn);
+            P.Data[2][3] = 1.0f;
+            P.Data[3][3] = 0.0f;
+
+            // Update constant buffer used by shadow depth pass (b6 VS)
+            FShadowMapConstants SpotCasterConsts = {};
+            SpotCasterConsts.LightViewP[0] = V;
+            SpotCasterConsts.LightProjP[0] = P;
+            SpotCasterConsts.LightViewPInv[0] = V.Inverse();
+            SpotCasterConsts.ShadowMapSize = FVector2(tileW, tileH);
+            SpotCasterConsts.ShadowParams = FVector4(0.0008f, 0, 0, 0);
+            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, SpotCasterConsts);
+
+            // Calculate atlas tile viewport
+            const uint32 tileX = static_cast<uint32>(idx % SpotAtlasCols);
+            const uint32 tileY = static_cast<uint32>(idx / SpotAtlasCols);
+            D3D11_VIEWPORT vp = SpotShadowViewport;
+            vp.TopLeftX = tileW * static_cast<float>(tileX);
+            vp.TopLeftY = tileH * static_cast<float>(tileY);
+            DeviceContext->RSSetViewports(1, &vp);
+
+            // Render scene from this spot light POV into its tile
+            for (auto MeshComp : Context.StaticMeshes)
+            {
+                if (!MeshComp || !MeshComp->IsVisible()) continue;
+                RenderPrimitive(MeshComp);
+            }
+
+            // First one cached for backwards compatibility (used by StaticMeshPass)
+            if (idx == 0)
+            {
+                SpotLightView = V;
+                SpotLightProj = P;
+            }
+
+            // Compute atlas transform with 1 texel inner padding to avoid bleeding
+            const float sx = tileW / atlasW;
+            const float sy = tileH / atlasH;
+            const float ox = (tileW * tileX) / atlasW;
+            const float oy = (tileH * tileY) / atlasH;
+            const float padU = 1.5f / atlasW; // ~1.5 texels
+            const float padV = 1.5f / atlasH;
+
+            FSpotShadowAtlasEntry entry;
+            entry.View = V;
+            entry.Proj = P;
+            entry.AtlasScale = FVector2(std::max(0.0f, sx - 2.0f * padU), std::max(0.0f, sy - 2.0f * padV));
+            entry.AtlasOffset = FVector2(ox + padU, oy + padV);
+            // Write at the same index used by clustered lighting for this spotlight
+            Entries[idx] = entry;
+        }
+
+        // Upload entries to GPU structured buffer
+        if (SpotShadowAtlasStructuredBuffer)
+        {
+            FRenderResourceFactory::UpdateStructuredBuffer(SpotShadowAtlasStructuredBuffer, Entries);
+        }
+    }
+    
     // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
@@ -1094,5 +1261,7 @@ void FUpdateLightBufferPass::Release()
     
     // Light Camera 상수 버퍼 해제
     SafeRelease(LightCameraConstantBuffer);
+    SafeRelease(SpotShadowAtlasSRV);
+    SafeRelease(SpotShadowAtlasStructuredBuffer);
 }
 
