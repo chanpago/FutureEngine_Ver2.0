@@ -140,6 +140,13 @@ cbuffer SpotShadowConstants : register(b7)
     uint SpotUseVSM;
     uint SpotUsePCF;
     float SpotPadding;
+
+    // Atlas info for multi-spot shadows
+    float2 SpotAtlasTextureSize; // (AtlasW, AtlasH)
+    float2 SpotTileSize;         // (TileW, TileH)
+    uint   SpotAtlasCols;
+    uint   SpotAtlasRows;
+    float2 SpotAtlasPadding;
 };
 
 StructuredBuffer<int> PointLightIndices : register(t6);
@@ -149,6 +156,15 @@ StructuredBuffer<FSpotLightInfo> SpotLightInfos : register(t9);
 Texture2D ShadowMapTexture : register(t10);
 Texture2DArray CascadedShadowMapTexture : register(t11);
 Texture2D SpotShadowMapTexture : register(t12);
+// Per-spot atlas entry buffer (index aligns with SpotLightInfos index)
+struct FSpotShadowAtlasEntry
+{
+    row_major float4x4 View;
+    row_major float4x4 Proj;
+    float2 AtlasScale;
+    float2 AtlasOffset;
+};
+StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -557,28 +573,41 @@ inline float CalculateShadowFactor(float3 WorldPosition)
 }
 
 // Compute spotlight shadow factor from single-spot constants (b7/t12)
-float CalculateSpotShadowFactor(float3 worldPos)
+float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
 {
     // If constants not initialized or SRV not bound, skip sampling
     if (SpotShadowMapSize.x <= 0.0f || SpotRange <= 0.0f)
         return 1.0f;
 
+    // Fetch per-spot view/proj and atlas transform
+    FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
+
     // Transform world position to spot light clip space
-    float4 clip = mul(float4(worldPos, 1.0f), SpotLightView);
-    clip = mul(clip, SpotLightProj);
+    float4 clip = mul(float4(worldPos, 1.0f), entry.View);
+    clip = mul(clip, entry.Proj);
     if (clip.w <= 0.0f)
         return 1.0f; // behind the light frustum
 
     float invW = rcp(clip.w);
     float2 uv = float2(clip.x * invW, clip.y * invW) * 0.5f + 0.5f;
     uv.y = 0.5f - (clip.y * invW) * 0.5f; // DirectX UV: flip Y
-    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f)
+
+    // Guard against bleeding by shrinking within the tile by ~1 texel
+    uint atlasW, atlasH;
+    SpotShadowMapTexture.GetDimensions(atlasW, atlasH);
+    float2 atlasTexel = 1.0 / float2(atlasW, atlasH);
+    float2 pad = atlasTexel * 1.5f; // tweakable inner padding in atlas UVs
+    float2 safeScale  = max(entry.AtlasScale - 2.0f * pad, float2(0.0f, 0.0f));
+    float2 safeOffset = entry.AtlasOffset + pad;
+    // Map local [0,1] UV into padded atlas rect
+    float2 uvAtlas = safeOffset + uv * safeScale;
+    if (uvAtlas.x < 0.0f || uvAtlas.x > 1.0f || uvAtlas.y < 0.0f || uvAtlas.y > 1.0f)
         return 1.0f;
 
     float currentDepth = saturate(clip.z * invW);
     
     // Use explicit LOD to avoid gradient use in dynamic loops
-    float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uv, 0).r;
+    float sd = SpotShadowMapTexture.SampleLevel(SamplerShadow, uvAtlas, 0).r;
     return (currentDepth - 0.0001f) > sd ? 0.0f : 1.0f;
 }
 
@@ -914,10 +943,12 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
     uint SpotLightCount = GetSpotLightCount(LightIndicesOffset);
     for (uint j = 0; j < SpotLightCount ; j++)
     {
-        FSpotLightInfo SpotLight = GetSpotLight(LightIndicesOffset + j);
+        // Fetch global index and info
+        uint SpotIndex = SpotLightIndices[LightIndicesOffset + j];
+        FSpotLightInfo SpotLight = SpotLightInfos[SpotIndex];
         FIllumination S = CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation);
         
-        float sf = CalculateSpotShadowFactor(Input.WorldPosition);
+        float sf = CalculateSpotShadowFactorIndexed(SpotIndex, Input.WorldPosition);
         S.Diffuse *= sf;
         S.Specular *= sf;
         ADD_ILLUM(Illumination, S);

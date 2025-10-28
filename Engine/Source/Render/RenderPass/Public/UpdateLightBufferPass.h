@@ -25,6 +25,12 @@ public:
     // Spot light shadow matrices (for single caster)
     FMatrix GetSpotLightViewMatrix() const { return SpotLightView; }
     FMatrix GetSpotLightProjectionMatrix() const { return SpotLightProj; }
+    // Spot shadow atlas resources
+    ID3D11ShaderResourceView* GetSpotShadowAtlasSRV() const { return SpotShadowAtlasSRV; }
+    uint32 GetSpotAtlasCols() const { return SpotAtlasCols; }
+    uint32 GetSpotAtlasRows() const { return SpotAtlasRows; }
+    float  GetSpotTileWidth() const { return SpotShadowViewport.Width; }
+    float  GetSpotTileHeight() const { return SpotShadowViewport.Height; }
 	FMatrix GetCachedEyeView() const { return CachedEyeView; }
 	FMatrix GetCachedEyeProj() const { return CachedEyeProj; }
 
@@ -60,11 +66,17 @@ private:
 	ID3D11InputLayout* ShadowMapInputLayout = nullptr;
 	ID3D11Buffer* LightCameraConstantBuffer = nullptr;
 	ID3D11Buffer* PSMConstantBuffer = nullptr;
+	// Spot shadow atlas structured buffer (per-spot view/proj + atlas transform)
+	ID3D11Buffer* SpotShadowAtlasStructuredBuffer = nullptr;
+	ID3D11ShaderResourceView* SpotShadowAtlasSRV = nullptr;
 
 	// Shadow Map Viewports
 	D3D11_VIEWPORT DirectionalShadowViewport;
 	D3D11_VIEWPORT SpotShadowViewport;
 	D3D11_VIEWPORT PointShadowViewport;
+	// Atlas layout for spot shadows
+	uint32 SpotAtlasCols = 4;
+	uint32 SpotAtlasRows = 4;
 
     FMatrix LightViewP;
     FMatrix LightProjP;
