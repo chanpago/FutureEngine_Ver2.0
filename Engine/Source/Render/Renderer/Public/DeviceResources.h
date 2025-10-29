@@ -126,8 +126,9 @@ public:
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
 	ID3D11Texture2D* GetSceneColorTexture() const {return SceneColorTexture; }
 
-	ID3D11ShaderResourceView* GetCascadedShadowMapSRV() const { return CascadedShadowMapSRV; }
-	ID3D11ShaderResourceView* GetCascadedShadowMapColorSRV() const { return CascadedShadowMapColorSRV; }
+	// CSM Getters (returns resources from currently active tier, same as Directional)
+	ID3D11ShaderResourceView* GetCascadedShadowMapSRV() const { return CascadedShadowMapSRVs[DirectionalShadowActiveTier]; }
+	ID3D11ShaderResourceView* GetCascadedShadowMapColorSRV() const { return CascadedShadowMapColorSRVs[DirectionalShadowActiveTier]; }
 	ID3D11ShaderResourceView* GetCascadedShadowMapSliceSRV(int CascadeIndex) const;
 	ID3D11DepthStencilView* GetCascadedShadowMapDSV(int CascadeIndex) const;
 	ID3D11RenderTargetView* GetCascadedShadowMapColorRTV(int CascadeIndex) const;
@@ -191,14 +192,16 @@ private:
     ID3D11RenderTargetView* SpotShadowMapColorRTV = nullptr;
     ID3D11ShaderResourceView* SpotShadowMapColorSRV = nullptr;
 
-	// CSM Resources
-	ID3D11Texture2D* CascadedShadowMapTexture = nullptr;
-	ID3D11Texture2D* CascadedShadowMapColorTexture = nullptr;
-	ID3D11ShaderResourceView* CascadedShadowMapSRV = nullptr; 
-	ID3D11ShaderResourceView* CascadedShadowMapColorSRV = nullptr;
-	ID3D11ShaderResourceView* CascadedShadowMapSliceSRVs[MAX_CASCADES] = { nullptr };
-	ID3D11DepthStencilView* CascadedShadowMapDSVs[MAX_CASCADES] = { nullptr };
-	ID3D11RenderTargetView* CascadedShadowMapColorRTVs[MAX_CASCADES] = { nullptr };
+	// CSM Resources (3-Tier System)
+	// Tier 0: Low (1024), Tier 1: Mid (2048), Tier 2: High (4096)
+	ID3D11Texture2D* CascadedShadowMapTextures[3] = { nullptr, nullptr, nullptr };
+	ID3D11Texture2D* CascadedShadowMapColorTextures[3] = { nullptr, nullptr, nullptr };
+	ID3D11ShaderResourceView* CascadedShadowMapSRVs[3] = { nullptr, nullptr, nullptr };
+	ID3D11ShaderResourceView* CascadedShadowMapColorSRVs[3] = { nullptr, nullptr, nullptr };
+	ID3D11ShaderResourceView* CascadedShadowMapSliceSRVs[3][MAX_CASCADES] = { { nullptr } };
+	ID3D11DepthStencilView* CascadedShadowMapDSVs[3][MAX_CASCADES] = { { nullptr } };
+	ID3D11RenderTargetView* CascadedShadowMapColorRTVs[3][MAX_CASCADES] = { { nullptr } };
+	// Note: CSM uses same tier as Directional shadow (DirectionalShadowActiveTier)
 	
 	D3D11_VIEWPORT ViewportInfo = {};
 
