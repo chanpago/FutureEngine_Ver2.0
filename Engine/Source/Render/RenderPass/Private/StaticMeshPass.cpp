@@ -90,27 +90,53 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		switch (ProjectionType)
 		{
 		case EShadowProjectionType::Default:
+			{
+				// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
+				ShadowConsts.EyeView = LightBufferPass->GetCachedEyeView();
+				ShadowConsts.EyeProj = LightBufferPass->GetCachedEyeProj();
+				ShadowConsts.EyeViewProjInv = (ShadowConsts.EyeView * ShadowConsts.EyeProj).Inverse();
+
+				ShadowConsts.LightViewP[0] = LightBufferPass->GetLightViewMatrix();
+				ShadowConsts.LightProjP[0] = LightBufferPass->GetLightProjectionMatrix();
+				ShadowConsts.LightViewPInv[0] = ShadowConsts.LightViewP[0].Inverse();
+				ShadowConsts.CameraClipToLightClip = FMatrix::Identity();
+				
+				ShadowConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
+				FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
+				ShadowConsts.LightDirWS = LdirWS;
+				ShadowConsts.bInvertedLight = 0;
+
+				ShadowConsts.LightOrthoParams = LightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
+
+				ShadowConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
+				ShadowConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+				break;
+			}
 		case EShadowProjectionType::PSM:
 		{
-			// ★ PSM 베이킹 시 사용한 카메라 V/P를 그대로 사용 (shading과 베이킹의 카메라 일치 보장)
+			// LiSPSM: Use matrices from LightBufferPass
+			// GetCachedEyeView/Proj are used in BuildDirectionalLightLiSPSM, keep for reference
 			ShadowConsts.EyeView = LightBufferPass->GetCachedEyeView();
 			ShadowConsts.EyeProj = LightBufferPass->GetCachedEyeProj();
-			ShadowConsts.EyeViewProjInv = (ShadowConsts.EyeView * ShadowConsts.EyeProj).Inverse();
-
-			ShadowConsts.LightViewP[0] = LightBufferPass->GetLightViewMatrix();
-			ShadowConsts.LightProjP[0] = LightBufferPass->GetLightProjectionMatrix();
-			ShadowConsts.LightViewPInv[0] = ShadowConsts.LightViewP[0].Inverse();
-			ShadowConsts.CameraClipToLightClip = FMatrix::Identity();
-				
+			
+			// Not used for LiSPSM shading (we use CameraClipToLightClip instead)
+			ShadowConsts.LightViewP[0] = FMatrix::Identity();
+			ShadowConsts.LightProjP[0] = FMatrix::Identity();
+			
+			// For LiSPSM: use the pre-computed PSMMatrix from CalculateShadowMatrices
+			// This is: EyeSpace -> LightClip transform
+			// Shader does: World -> View (gets EyeSpace) -> mul(CameraClipToLightClip) -> LightClip
+			ShadowConsts.CameraClipToLightClip = LightBufferPass->GetCachedLisPSMMatrix();
+			
 			ShadowConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
+			// LiSPSM requires light direction as "surface -> light" (away from scene)
+			// GetForwardVector() returns "light -> surface", so negate it
 			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
 			ShadowConsts.LightDirWS = LdirWS;
 			ShadowConsts.bInvertedLight = 0;
-
-			ShadowConsts.LightOrthoParams = LightBufferPass->GetLightOrthoLTRB(); // (l,r,b,t)
-
+			
 			ShadowConsts.ShadowMapSize = FVector2(2048.0f, 2048.0f);
-			ShadowConsts.bUsePSM = Context.DirectionalLights[0]->GetCastShadows();
+			ShadowConsts.bUsePSM = 1.0f;
 			break;
 		}
 		case EShadowProjectionType::CSM:

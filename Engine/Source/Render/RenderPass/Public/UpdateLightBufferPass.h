@@ -34,6 +34,7 @@ public:
     float  GetSpotTileHeight() const { return SpotShadowViewport.Height; }
 	FMatrix GetCachedEyeView() const { return CachedEyeView; }
 	FMatrix GetCachedEyeProj() const { return CachedEyeProj; }
+	FMatrix GetCachedLisPSMMatrix() const { return CachedLisPSMMatrix; }  // EyeSpace -> LightClip for LiSPSM
 
 	FVector4 GetLightOrthoLTRB() const {return LightOrthoLTRB;}
 
@@ -41,12 +42,18 @@ public:
 	void CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera);
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
+	// LiSPSM for DirectionalLight: Light-Space Perspective Shadow Mapping (PUBLIC for StaticMeshPass)
+	void BuildDirectionalLightLiSPSM(const FMatrix& EyeView, const FMatrix& EyeProj,
+		const FVector& LightDirWS, int ShadowMapWidth, int ShadowMapHeight,
+		FMatrix& OutLightView, FMatrix& OutLightProj, FMatrix& OutPSMMatrix);
+
 	struct FShadowCalculationData
 	{
 	    TArray<FMatrix> LightViews;
 	    TArray<FMatrix> LightProjs;
 	    FVector4        LightOrthoParams; // For EShadowProjectionType::None
 		FVector4		CascadeSplits;	  // For EShadowProjectionType::CSM
+		FMatrix			LisPSM;	
 	};
 
 private:
@@ -100,6 +107,7 @@ public:
     FMatrix SpotLightProj;
 	FMatrix CachedEyeView;  // PSM 베이킹 시 사용한 카메라 V_e
 	FMatrix CachedEyeProj;  // PSM 베이킹 시 사용한 카메라 P_e
+	FMatrix CachedLisPSMMatrix;  // LiSPSM: EyeSpace -> LightClip transform
 	
 	FVector4 LightOrthoLTRB = FVector4(-1, 1, -1, 1);
 

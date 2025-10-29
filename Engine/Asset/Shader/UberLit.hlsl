@@ -531,25 +531,30 @@ float PSM_Visibility(float3 worldPos)
     float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
     
     float4 sh;
-
+    float2 uv;
     if (bUsePSM == 1) {
-        // PSM: World→Eye NDC→Light
-        float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
-        float3 ndc = eyeClip.xyz / max(eyeClip.w, 1e-8f);
-        sh = mul(mul(float4(ndc, 1.0), LightViewP[0]), LightProjP[0]);
+        // LiSPSM: Clip → LightClip using precomputed warp
+        float4 clipPos = mul(float4(worldPos, 1.0), View);
+        clipPos = mul(clipPos, Projection);
+        sh = mul(clipPos, CameraClipToLightClip);
+        // Derive UV/depth from sh (LiSPSM uses UV=(ndc.y, ndc.z), depth=ndc.z)
+        float invW = rcp(max(sh.w, 1e-8f));
+        float3 ndc = sh.xyz * invW;
+        uv = ndc.yz * 0.5f + 0.5f;
+        uv.y = 1.0f - uv.y;   // DX UV flip
+        float  z  = saturate(ndc.z);
     }
     else {
-        // Simple Ortho: World→Light 직접 변환
+        // Simple Ortho: World→Light directly
         sh = mul(mul(float4(worldPos, 1.0), LightViewP[0]), LightProjP[0]);
+        uv.x = sh.x / sh.w * 0.5 + 0.5;     // NDC X: [-1,1] → UV U: [0,1]
+        uv.y = 0.5 - sh.y / sh.w * 0.5;     // NDC Y: [-1(bottom),+1(top)] → UV V: [1(bottom),0(top)]
+        float  z  = sh.z  / sh.w;
     }
 
-    // Clip→NDC→UV, 깊이 (DirectX UV: Y축 반전 필요)
-    float2 uv;
-    uv.x = sh.x / sh.w * 0.5 + 0.5;     // NDC X: [-1,1] → UV U: [0,1]
-    uv.y = 0.5 - sh.y / sh.w * 0.5;     // NDC Y: [-1(bottom),+1(top)] → UV V: [1(bottom),0(top)]
-    float  z  = sh.z  / sh.w;
+    // Derive UV/depth from sh (LiSPSM uses UV=(ndc.y, ndc.z), depth=ndc.z)
 
-    // 경계 밖이면 취향에 따라 1(밝게) 또는 0(그림자) 처리. 보통 1이 안전.
+
     if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
     
 /*
@@ -597,53 +602,74 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
 // Variant that applies slope-scaled bias using world normal
 float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
 {
-    // Compute base values as in PSM_Visibility
     float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
-    float4 sh;
-    if (bUsePSM == 1) {
-        float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
-        float3 ndc = eyeClip.xyz / max(eyeClip.w, 1e-8f);
-        sh = mul(mul(float4(ndc, 1.0), LightViewP[0]), LightProjP[0]);
-    } else {
-        sh = mul(mul(float4(worldPos, 1.0), LightViewP[0]), LightProjP[0]);
+    float2 ShadowUV;
+    float CurrentDepth;
+    
+    if (bUsePSM > 0.5f)
+    {
+        // LiSPSM Path: World -> EyeSpace -> LightSpace transformation
+        float4 eyeSpace = mul(float4(worldPos, 1.0f), View);
+        
+        // Apply LiSPSM transformation (EyeSpace -> LightSpace)
+        float4 lightClip = mul(eyeSpace, CameraClipToLightClip);
+        
+        // Perspective divide
+        float invW = rcp(max(abs(lightClip.w), 1e-8f));
+        float3 ndc = lightClip.xyz * invW;
+        
+        // NDC to UV
+        ShadowUV = ndc.xy * 0.5f + 0.5f;
+        ShadowUV.y = 1.0f - ShadowUV.y;  // DX UV flip
+        
+        // LiSPSM depth - DO NOT saturate, perspective depth can exceed [0,1]
+        CurrentDepth = ndc.z;
     }
-    float2 uv; uv.x = sh.x / sh.w * 0.5 + 0.5; uv.y = 0.5 - sh.y / sh.w * 0.5;
-    float z = sh.z / sh.w;
-    if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
-
-    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[0]);
-    LightSpacePos = mul(LightSpacePos, LightProjP[0]);
-    LightSpacePos.xyz /= LightSpacePos.w;
-    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-    ShadowUV.y = 1.0f - ShadowUV.y;
-    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+    else
+    {
+        // Standard Ortho Path: World -> LightView -> LightProj
+        float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[0]);
+        LightSpacePos = mul(LightSpacePos, LightProjP[0]);
+        
+        float invW = rcp(max(abs(LightSpacePos.w), 1e-8f));
+        ShadowUV = LightSpacePos.xy * invW * 0.5f + 0.5f;
+        ShadowUV.y = 1.0f - ShadowUV.y;
+        
+        CurrentDepth = LightSpacePos.z * invW;
+    }
+    
+    // Out-of-bounds check
+    if (any(ShadowUV < 0.0f) || any(ShadowUV > 1.0f))
         return 1.0f;
-
-    float CurrentDepth = LightSpacePos.z;
-
-    // Slope-scaled bias term
+    
+    // Slope-scaled bias
     float3 Ldir = SafeNormalize3(LightDirWS);
     float ndotl_abs = abs(dot(worldNormal, Ldir));
     float combinedBias = Directional.Bias + Directional.SlopeBias * (1.0f - ndotl_abs);
-
-    if (bUseCSM != 0)
+    
+    // CSM check
+    if (bUseCSM > 0.5f)
     {
         return SampleShadowCSM(worldPos, ViewDepth);
     }
-    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
+    
+    // Shadow sampling
+    if (((bUseVSM < 0.5f) && (bUsePCF < 0.5f)) || ((bUseVSM > 0.5f) && (bUsePCF > 0.5f)))
     {
+        // Classic depth compare
         float sd = ShadowMapTexture.SampleLevel(SamplerWrap, ShadowUV, 0).r;
         return (CurrentDepth - combinedBias <= sd) ? 1.0f : 0.0f;
     }
-    else if (bUsePCF != 0)
+    else if (bUsePCF > 0.5f)
     {
         return ShadowPCF2D(ShadowMapTexture, SamplerPCF, ShadowUV, CurrentDepth - combinedBias);
     }
-    else if (bUseVSM != 0)
+    else if (bUseVSM > 0.5f)
     {
         static const float VSM_MipBias = 1.25f;
         return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth - combinedBias, VSM_MipBias);
     }
+    
     return 1.0f;
 }
 

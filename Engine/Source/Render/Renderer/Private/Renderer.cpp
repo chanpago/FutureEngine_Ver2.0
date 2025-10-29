@@ -804,6 +804,8 @@ void URenderer::RenderBegin() const
 	}
 	GetDeviceContext()->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
+
+	
 	// FXAA bool값 변수에 따라서 RTV세팅
     if (bFXAAEnabled)
     {

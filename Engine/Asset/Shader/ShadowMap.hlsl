@@ -123,22 +123,23 @@ VS_OUTPUT mainVS(VS_INPUT input)
     
     if (bUsePSM == 1)
     {
-        // --- PSM: lightView * warpPSM * spotPerspective * crop ---
-        // C++에서 PSMMatrix = lightView * spotPerspective * crop로 계산됨
-        // 셀이더에서는 World → PSMMatrix 변환만 수행
+        // --- LiSPSM: World → EyeView → LightSpaceBasis → Translate → Perspective → Clip ---
+        // LiSPSM의 lightSpaceBasis는 EyeSpace 기준으로 정의되므로
+        // World → EyeView 변환이 반드시 먼저 필요합니다
         
         // 바이어스 적용: 표면을 광원 방향으로 약간 이동
         float  a = ShadowParams.x;  // ShadowBias
         float3 biasDir = normalize(LightDirWS);  // "표면 → 광원" 방향
         float3 biasedPos = worldPos.xyz + biasDir * a;
         
-        // PSM 변환: World → Light View → Spot Perspective → Crop
-        // LightViewP[0] = lightView, LightProjP[0] = spotPerspective * crop
+        // LiSPSM 변환:
+        // LightViewP[0] = EyeView * lightSpaceBasis * translate
+        // LightProjP[0] = perspective * clip
         o.Position = mul(mul(float4(biasedPos, 1.0f), LightViewP[0]), LightProjP[0]);
     }
     else
     {
-        // Standard SpotLight Shadow: World→Light 직접 변환 (bias 적용)
+        // Standard Ortho Shadow: World→Light 직접 변환
         o.Position = mul(mul(worldPos, LightViewP[0]), LightProjP[0]);
     }
     

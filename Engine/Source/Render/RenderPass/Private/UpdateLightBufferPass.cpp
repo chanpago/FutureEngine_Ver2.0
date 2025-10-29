@@ -378,7 +378,7 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
         }
     }
     const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
-    UE_LOG("BakeSpotShadowMap: NumSpotLights = %d", NumSpotLights);
+    //UE_LOG("BakeSpotShadowMap: NumSpotLights = %d", NumSpotLights);
     
     if (NumSpotLights > 0)
     {
@@ -388,7 +388,7 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
         DeviceContext->PSSetShaderResources(12, 2, NullSRVs);
 
         ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
-        UE_LOG("SpotShadowMapDSV = %p", dsv);
+        //UE_LOG("SpotShadowMapDSV = %p", dsv);
         if (FilterType == EShadowFilterType::VSM)
         {
             ID3D11RenderTargetView* rtv = Renderer.GetDeviceResources()->GetSpotShadowMapColorRTV();
@@ -449,12 +449,11 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
             else
             {
                 // === Standard Path (LVP) ===
-                UE_LOG("SpotLight[%d] using Standard Shadow (Camera Independent)", idx);
+                //UE_LOG("SpotLight[%d] using Standard Shadow (Camera Independent)", idx);
                 // Compute view matrix from light basis
                 const FVector eye = SpotCaster->GetWorldLocation();
                 const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
-                UE_LOG("  Light Pos=(%.2f, %.2f, %.2f), Fwd=(%.2f, %.2f, %.2f)",
-                    eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
+                //UE_LOG("  Light Pos=(%.2f, %.2f, %.2f), Fwd=(%.2f, %.2f, %.2f)", eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
                 const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
                 const FVector right = tmpUp.Cross(fwd).GetNormalized();
                 const FVector up = fwd.Cross(right);
@@ -1319,7 +1318,44 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
         break;
     }
     case EShadowProjectionType::PSM:
+    {
+        // === DirectionalLight LiSPSM: bCastShadows 플래그로 분기 ===
+        UCamera* MainCamera = Context.CurrentCamera;
+        if (!MainCamera) {
+            UE_LOG("⚠️ LiSPSM skipped: no camera");
+            break;
+        }
+        
+        // LiSPSM Path
+        UE_LOG("DirectionalLight using LiSPSM");
+        
+        FMatrix V, P, PSMMatrix = FMatrix::Identity();
+        // LiSPSM requires light direction as "surface -> light" (away from scene)
+        // GetForwardVector() returns "light -> surface", so negate it
+        const FVector lightDir = -Light->GetForwardVector();  // 표면 -> 광원
+        
+        BuildDirectionalLightLiSPSM(
+            MainCamera->GetCameraViewMatrix(),
+            MainCamera->GetCameraProjectionMatrix(),
+            lightDir,
+            (int)DirectionalShadowViewport.Width,
+            (int)DirectionalShadowViewport.Height,
+            V, P, PSMMatrix
+        );
+        
+        // Store all three matrices
+        OutShadowData.LightViews.push_back(V);
+        OutShadowData.LightProjs.push_back(P);
+        OutShadowData.LisPSM = PSMMatrix;  // EyeSpace -> LightClip transform for shading
+        
+        LightViewP = V;
+        LightProjP = P;
+        CachedEyeView = MainCamera->GetCameraViewMatrix();
+        CachedEyeProj = MainCamera->GetCameraProjectionMatrix();
+        CachedLisPSMMatrix = PSMMatrix;  // Store for StaticMeshPass
+        
         break;
+    }
     case EShadowProjectionType::CSM:
     {
         const UCamera* Camera = Context.CurrentCamera;
@@ -1334,96 +1370,137 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
             // Calculate current cascade slices' corner
             float NearSplit = (i == 0) ? Camera->GetNearZ() : pSplits[i - 1];
             float FarSplit = pSplits[i];
-            FVector FrustumCorners[8];
-            Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
-
-            // Calculate the center of cascade slice
-            FVector FrustumCenter = FVector::ZeroVector();
-            for (int j = 0; j < 8; j++)
+            
+            FMatrix LightViewMatrix, CascadeLightProj;
+            
+            // === LiSPSM for cascade 0,1 if bCastShadows enabled ===
+            const bool bUseLiSPSM = (i == 0 || i == 1) && Light->GetCastShadows();
+            
+            if (bUseLiSPSM)
             {
-                FrustumCenter += FrustumCorners[j];
+                // LiSPSM Path for near cascades
+                FMatrix cascadeEyeView = Camera->GetCameraViewMatrix();
+                
+                // 현재 cascade 범위로 제한된 투영 행렬 계산
+                FMatrix cascadeEyeProj;
+                float aspect = Camera->GetAspect();
+                float fovY = Camera->GetFovY();
+                float nearZ = NearSplit;
+                float farZ = FarSplit;
+                
+                // Perspective projection for cascade range
+                float yScale = 1.0f / tanf(fovY * 0.5f);
+                float xScale = yScale / aspect;
+                cascadeEyeProj = FMatrix::Identity();
+                cascadeEyeProj.Data[0][0] = xScale;
+                cascadeEyeProj.Data[1][1] = yScale;
+                cascadeEyeProj.Data[2][2] = farZ / (farZ - nearZ);
+                cascadeEyeProj.Data[3][2] = -nearZ * farZ / (farZ - nearZ);
+                cascadeEyeProj.Data[2][3] = 1.0f;
+                cascadeEyeProj.Data[3][3] = 0.0f;
+                
+                FMatrix dummyPSM;
+                // LiSPSM requires light direction as "surface -> light"
+                BuildDirectionalLightLiSPSM(
+                    cascadeEyeView, cascadeEyeProj,
+                    -Light->GetForwardVector(),  // Negate to get surface->light direction
+                    (int)DirectionalShadowViewport.Width,
+                    (int)DirectionalShadowViewport.Height,
+                    LightViewMatrix, CascadeLightProj, dummyPSM
+                );
+                
+                UE_LOG("︠ CSM Cascade %d using LiSPSM", i);
             }
-            FrustumCenter /= 8.0f;
-
-            // Calculate the light's View matrix based on the frustum's center point 
-            FMatrix LightViewMatrix;
+            else
             {
-                // Set light position
-                FVector LightDir = Light->GetForwardVector().GetNormalized();
-                float ShadowDistance = 200.0f;
-                /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
-                float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
-                FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
+                // Standard Orthographic Projection for far cascades
+                FVector FrustumCorners[8];
+                Camera->GetFrustumCorners(FrustumCorners, NearSplit, FarSplit);
 
-                // light source targets the center of slice
-                FVector TargetPos = FrustumCenter;
-                FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
-
-                // LookAt matrix
-                FVector ZAxis = (TargetPos - LightPos).GetNormalized();
-                FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
-                FVector YAxis = ZAxis.Cross(XAxis);
-
-                LightViewMatrix = FMatrix::Identity();
-                LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
-                LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
-                LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
-                LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
-                LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
-                LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
-            }
-
-            // Calculate a tight Projection matrix
-            FMatrix CascadeLightProj;
-            {
-                FVector FrustumCornersLightView[8];
+                // Calculate the center of cascade slice
+                FVector FrustumCenter = FVector::ZeroVector();
                 for (int j = 0; j < 8; j++)
                 {
-                    FrustumCornersLightView[j] = FVector4(FrustumCorners[j], 1.0f) * LightViewMatrix;
+                    FrustumCenter += FrustumCorners[j];
                 }
+                FrustumCenter /= 8.0f;
 
-                FVector MinVec = FrustumCornersLightView[0];
-                FVector MaxVec = FrustumCornersLightView[0];
-                for (int j = 0; j < 8; j++)
+                // Calculate the light's View matrix based on the frustum's center point 
                 {
-                    MinVec.X = std::min(MinVec.X, FrustumCornersLightView[j].X);
-                    MinVec.Y = std::min(MinVec.Y, FrustumCornersLightView[j].Y);
-                    MinVec.Z = std::min(MinVec.Z, FrustumCornersLightView[j].Z);
-                    MaxVec.X = std::max(MaxVec.X, FrustumCornersLightView[j].X);
-                    MaxVec.Y = std::max(MaxVec.Y, FrustumCornersLightView[j].Y);
-                    MaxVec.Z = std::max(MaxVec.Z, FrustumCornersLightView[j].Z);
+                    // Set light position
+                    FVector LightDir = Light->GetForwardVector().GetNormalized();
+                    float ShadowDistance = 200.0f;
+                    FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
+
+                    // light source targets the center of slice
+                    FVector TargetPos = FrustumCenter;
+                    FVector UpVector = (abs(LightDir.Z) > 0.99f) ? FVector(0, 1, 0) : FVector(0, 0, 1);
+
+                    // LookAt matrix
+                    FVector ZAxis = (TargetPos - LightPos).GetNormalized();
+                    FVector XAxis = (UpVector.Cross(ZAxis)).GetNormalized();
+                    FVector YAxis = ZAxis.Cross(XAxis);
+
+                    LightViewMatrix = FMatrix::Identity();
+                    LightViewMatrix.Data[0][0] = XAxis.X;   LightViewMatrix.Data[1][0] = XAxis.Y;   LightViewMatrix.Data[2][0] = XAxis.Z;
+                    LightViewMatrix.Data[0][1] = YAxis.X;   LightViewMatrix.Data[1][1] = YAxis.Y;   LightViewMatrix.Data[2][1] = YAxis.Z;
+                    LightViewMatrix.Data[0][2] = ZAxis.X;   LightViewMatrix.Data[1][2] = ZAxis.Y;   LightViewMatrix.Data[2][2] = ZAxis.Z;
+                    LightViewMatrix.Data[3][0] = -XAxis.FVector::Dot(LightPos);
+                    LightViewMatrix.Data[3][1] = -YAxis.FVector::Dot(LightPos);
+                    LightViewMatrix.Data[3][2] = -ZAxis.FVector::Dot(LightPos);
                 }
 
-                // +-+-+ Texel Snapping (prevents shadow shimmering) +-+-+
+                // Calculate a tight Projection matrix
                 {
-                    const float ShadowMapResolution = DirectionalShadowViewport.Width;
-                    // stabilize shadow map edges
-                    float worldUnitsPerTexelX = (MaxVec.X - MinVec.X) / ShadowMapResolution;
-                    float worldUnitsPerTexelY = (MaxVec.Y - MinVec.Y) / ShadowMapResolution;
+                    FVector FrustumCornersLightView[8];
+                    for (int j = 0; j < 8; j++)
+                    {
+                        FrustumCornersLightView[j] = FVector4(FrustumCorners[j], 1.0f) * LightViewMatrix;
+                    }
 
-                    // Snap based on the center
-                    FVector Center = (MinVec + MaxVec) * 0.5f;
+                    FVector MinVec = FrustumCornersLightView[0];
+                    FVector MaxVec = FrustumCornersLightView[0];
+                    for (int j = 0; j < 8; j++)
+                    {
+                        MinVec.X = std::min(MinVec.X, FrustumCornersLightView[j].X);
+                        MinVec.Y = std::min(MinVec.Y, FrustumCornersLightView[j].Y);
+                        MinVec.Z = std::min(MinVec.Z, FrustumCornersLightView[j].Z);
+                        MaxVec.X = std::max(MaxVec.X, FrustumCornersLightView[j].X);
+                        MaxVec.Y = std::max(MaxVec.Y, FrustumCornersLightView[j].Y);
+                        MaxVec.Z = std::max(MaxVec.Z, FrustumCornersLightView[j].Z);
+                    }
 
-                    // Snap the center coordinates to texel units in light view space
-                    Center.X = std::floor(Center.X / worldUnitsPerTexelX) * worldUnitsPerTexelX;
-                    Center.Y = std::floor(Center.Y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
+                    // +-+-+ Texel Snapping (prevents shadow shimmering) +-+-+
+                    {
+                        const float ShadowMapResolution = DirectionalShadowViewport.Width;
+                        // stabilize shadow map edges
+                        float worldUnitsPerTexelX = (MaxVec.X - MinVec.X) / ShadowMapResolution;
+                        float worldUnitsPerTexelY = (MaxVec.Y - MinVec.Y) / ShadowMapResolution;
 
-                    // Recalculate min/max based on the snapped center
-                    const float halfRangeX = (MaxVec.X - MinVec.X) * 0.5f;
-                    const float halfRangeY = (MaxVec.Y - MinVec.Y) * 0.5f;
-                    MinVec.X = Center.X - halfRangeX;
-                    MinVec.Y = Center.Y - halfRangeY;
-                    MaxVec.X = Center.X + halfRangeX;
-                    MaxVec.Y = Center.Y + halfRangeY;
+                        // Snap based on the center
+                        FVector Center = (MinVec + MaxVec) * 0.5f;
+
+                        // Snap the center coordinates to texel units in light view space
+                        Center.X = std::floor(Center.X / worldUnitsPerTexelX) * worldUnitsPerTexelX;
+                        Center.Y = std::floor(Center.Y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
+
+                        // Recalculate min/max based on the snapped center
+                        const float halfRangeX = (MaxVec.X - MinVec.X) * 0.5f;
+                        const float halfRangeY = (MaxVec.Y - MinVec.Y) * 0.5f;
+                        MinVec.X = Center.X - halfRangeX;
+                        MinVec.Y = Center.Y - halfRangeY;
+                        MaxVec.X = Center.X + halfRangeX;
+                        MaxVec.Y = Center.Y + halfRangeY;
+                    }
+
+                    CascadeLightProj = FMatrix::Identity();
+                    CascadeLightProj.Data[0][0] = 2.0f / (MaxVec.X - MinVec.X);
+                    CascadeLightProj.Data[1][1] = 2.0f / (MaxVec.Y - MinVec.Y);
+                    CascadeLightProj.Data[2][2] = 1.0f / (MaxVec.Z - MinVec.Z);
+                    CascadeLightProj.Data[3][0] = -(MaxVec.X + MinVec.X) / (MaxVec.X - MinVec.X);
+                    CascadeLightProj.Data[3][1] = -(MaxVec.Y + MinVec.Y) / (MaxVec.Y - MinVec.Y);
+                    CascadeLightProj.Data[3][2] = -MinVec.Z / (MaxVec.Z - MinVec.Z);
                 }
-
-                CascadeLightProj = FMatrix::Identity();
-                CascadeLightProj.Data[0][0] = 2.0f / (MaxVec.X - MinVec.X);
-                CascadeLightProj.Data[1][1] = 2.0f / (MaxVec.Y - MinVec.Y);
-                CascadeLightProj.Data[2][2] = 1.0f / (MaxVec.Z - MinVec.Z);
-                CascadeLightProj.Data[3][0] = -(MaxVec.X + MinVec.X) / (MaxVec.X - MinVec.X);
-                CascadeLightProj.Data[3][1] = -(MaxVec.Y + MinVec.Y) / (MaxVec.Y - MinVec.Y);
-                CascadeLightProj.Data[3][2] = -MinVec.Z / (MaxVec.Z - MinVec.Z);
             }
 
             CascadedShadowMapConstants.LightViewP[i] = LightViewMatrix;
@@ -1523,7 +1600,30 @@ void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType P
     }
     else if (ProjType == EShadowProjectionType::PSM)
     {
-
+        // LiSPSM Path
+        UCamera* Camera = Context.CurrentCamera;
+        if (!Camera) return;
+        
+        // For shadow map rendering: we DON'T use EyeView
+        // Shadow casters are transformed by: World -> LightView -> LightProj
+        CasterConsts.EyeView = FMatrix::Identity();
+        CasterConsts.EyeProj = FMatrix::Identity();
+        CasterConsts.EyeViewProjInv = FMatrix::Identity();
+        
+        // Shadow map is rendered with: World -> (EyeView * LightSpaceBasis * lsTranslate * lsPerspective * clipMatrix)
+        // which is the full OutPSMMatrix from BuildDirectionalLightLiSPSM
+        CasterConsts.LightViewP[0] = InShadowData.LightViews[0];  // = EyeView * lightSpaceBasis * lsTranslate
+        CasterConsts.LightProjP[0] = InShadowData.LightProjs[0];  // = lsPerspective * clipMatrix
+        CasterConsts.LightViewPInv[0] = InShadowData.LightViews[0].Inverse();
+        
+        // Not used for shadow map rendering
+        CasterConsts.CameraClipToLightClip = InShadowData.LisPSM;
+        
+        CasterConsts.ShadowParams = FVector4(Light->GetShadowBias(), Light->GetShadowSlopeBias(), 0, 0);
+        CasterConsts.LightDirWS = Light->GetForwardVector().GetNormalized();
+        CasterConsts.bInvertedLight = 0;
+        CasterConsts.ShadowMapSize = FVector2(DirectionalShadowViewport.Width, DirectionalShadowViewport.Height);
+        CasterConsts.bUsePSM = 1;  // Enable PSM flag for LiSPSM
     }
     else if (ProjType == EShadowProjectionType::CSM)
     {
@@ -1706,6 +1806,227 @@ void FUpdateLightBufferPass::BuildSpotLightPSM(const FMatrix& EyeView, const FMa
     OutLightView = lightView;
     OutLightProj = warpPSM * crop;
     OutPSMMatrix = lightView * warpPSM * crop;
+}
+
+void FUpdateLightBufferPass::BuildDirectionalLightLiSPSM(
+    const FMatrix& EyeView, const FMatrix& EyeProj,
+    const FVector& LightDirWS, int ShadowMapWidth, int ShadowMapHeight,
+    FMatrix& OutLightView, FMatrix& OutLightProj, FMatrix& OutPSMMatrix)
+{
+    // ============================================================
+    // NVIDIA LiSPSM Algorithm (PracticalPSM.cpp line 359-496)
+    // Adapted from DX9 Column-major Y-up to DX11 Row-major Z-up X-forward
+    // ============================================================
+    
+    const float Epsilon = 1e-4f;
+    
+    // === Temporal Stability: Quantize camera position to reduce jitter ===
+    // Round camera matrix to fixed grid to reduce per-frame variation
+    const float QuantizationStep = 0.1f;  // Adjust for balance between stability and accuracy
+    FMatrix QuantizedEyeView = EyeView;
+    
+    // Quantize translation components (last row for row-major)
+    QuantizedEyeView.Data[3][0] = floorf(EyeView.Data[3][0] / QuantizationStep) * QuantizationStep;
+    QuantizedEyeView.Data[3][1] = floorf(EyeView.Data[3][1] / QuantizationStep) * QuantizationStep;
+    QuantizedEyeView.Data[3][2] = floorf(EyeView.Data[3][2] / QuantizationStep) * QuantizationStep;
+    
+    FMatrix EyeViewInv = QuantizedEyeView.Inverse();
+    FMatrix EyeProjInv = EyeProj.Inverse();
+    
+    // === 1. Build Body B (frustum corners in Eye Space) ===
+    // NVIDIA line 371-372: Frustum eyeFrustum
+    // Use quantized view for all calculations to maintain consistency
+    FVector ndcCorners[8] = {
+        {-1,-1, 0}, { 1,-1, 0}, {-1, 1, 0}, { 1, 1, 0},  // near
+        {-1,-1, 1}, { 1,-1, 1}, {-1, 1, 1}, { 1, 1, 1}   // far
+    };
+    
+    FVector bodyB_eye[8];  // frustum corners in Eye Space
+    for (int i = 0; i < 8; ++i) {
+        FVector4 clip = FVector4(ndcCorners[i], 1.0f);
+        FVector4 eye = FMatrix::VectorMultiply(clip, EyeProjInv);
+        if (fabsf(eye.W) > Epsilon) {
+            bodyB_eye[i] = FVector(eye.X / eye.W, eye.Y / eye.W, eye.Z / eye.W);
+        }
+    }
+    
+    // === 2. Light-Space Basis (NVIDIA line 385-399) ===
+    // NVIDIA (RH): eyeVector = (0,0,-1) in EYE SPACE (RH convention: -Z forward)
+    // CRITICAL: To maintain shadow direction consistency with NVIDIA's implementation,
+    // we keep the SAME eyeVector direction even though we're using LH.
+    // This ensures the lightSpaceBasis orientation matches NVIDIA's reference.
+    // 
+    // Using NVIDIA's RH eye vector (-Z) for LH system:
+    FVector eyeVector(0.0f, 0.0f, -1.0f);  // Use NVIDIA's convention for consistent shadow direction
+    
+    // Transform light direction to Eye Space (use quantized view for consistency)
+    FVector4 lightEye4 = FMatrix::VectorMultiply(FVector4(LightDirWS, 0.0f), QuantizedEyeView);
+    FVector upVector(lightEye4.X, lightEye4.Y, lightEye4.Z);
+    upVector = upVector.GetNormalized();
+    
+    // Build orthonormal basis (NVIDIA line 391-393)
+    // NVIDIA: leftVector = Cross(upVector, eyeVector)
+    // NVIDIA: viewVector = Cross(upVector, leftVector)
+    // DirectX uses LH cross product convention
+    FVector leftVector = upVector.Cross(eyeVector).GetNormalized();
+    FVector viewVector = upVector.Cross(leftVector).GetNormalized();
+    
+    // === 3. Build Light Space Basis Matrix (NVIDIA line 395-399) ===
+    // NVIDIA (column-major): columns are [left, up, view]
+    // _11 = left.x, _12 = up.x, _13 = view.x
+    // _21 = left.y, _22 = up.y, _23 = view.y
+    // _31 = left.z, _32 = up.z, _33 = view.z
+    // 
+    // Row-major equivalent: rows are [left, up, view]
+    // Data[0] = [left.x, left.y, left.z]
+    // Data[1] = [up.x, up.y, up.z]
+    // Data[2] = [view.x, view.y, view.z]
+    FMatrix lightSpaceBasis = FMatrix::Identity();
+    lightSpaceBasis.Data[0][0] = leftVector.X; 
+    lightSpaceBasis.Data[0][1] = leftVector.Y; 
+    lightSpaceBasis.Data[0][2] = leftVector.Z;
+    
+    lightSpaceBasis.Data[1][0] = upVector.X; 
+    lightSpaceBasis.Data[1][1] = upVector.Y; 
+    lightSpaceBasis.Data[1][2] = upVector.Z;
+    
+    lightSpaceBasis.Data[2][0] = viewVector.X; 
+    lightSpaceBasis.Data[2][1] = viewVector.Y; 
+    lightSpaceBasis.Data[2][2] = viewVector.Z;
+    
+    // === 4. Transform Body B to Light Space (NVIDIA line 402) ===
+    FVector bodyB_ls[8];
+    for (int i = 0; i < 8; ++i) {
+        FVector4 ls = FMatrix::VectorMultiply(FVector4(bodyB_eye[i], 1.0f), lightSpaceBasis);
+        bodyB_ls[i] = FVector(ls.X, ls.Y, ls.Z);
+    }
+    
+    // === 5. Compute Light Space Bounding Box (NVIDIA line 404-409) ===
+    FVector lsMin(FLT_MAX, FLT_MAX, FLT_MAX);
+    FVector lsMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    for (int i = 0; i < 8; ++i) {
+        lsMin.X = std::min(lsMin.X, bodyB_ls[i].X);
+        lsMin.Y = std::min(lsMin.Y, bodyB_ls[i].Y);
+        lsMin.Z = std::min(lsMin.Z, bodyB_ls[i].Z);
+        lsMax.X = std::max(lsMax.X, bodyB_ls[i].X);
+        lsMax.Y = std::max(lsMax.Y, bodyB_ls[i].Y);
+        lsMax.Z = std::max(lsMax.Z, bodyB_ls[i].Z);
+    }
+    
+    FVector lightSpaceOrigin;
+    lightSpaceOrigin.X = (lsMin.X + lsMax.X) * 0.5f;
+    lightSpaceOrigin.Y = (lsMin.Y + lsMax.Y) * 0.5f;
+    
+    // === 6. Compute N_opt (NVIDIA line 410-421) ===
+    float cosg = fabsf(eyeVector.Dot(upVector));
+    float sing = sqrtf(std::max(0.0f, 1.0f - cosg * cosg));
+    sing = std::max(sing, 1e-3f);
+    
+    // Get near/far from projection (simplified)
+    float zNear = 1.0f;   // default near
+    float zFar = 125.0f; // default far
+    
+    // NVIDIA line 413-419: Nopt calculation
+    float Nopt0 = zNear + sqrtf(zNear * zFar);
+    float Nopt = Nopt0 / sing;
+    Nopt += 0.1f;  // bias
+    
+    lightSpaceOrigin.Z = lsMin.Z - Nopt;
+    
+    // === 7. Compute FOV and maxZ (NVIDIA line 424-435) ===
+    float maxx = 0.0f, maxy = 0.0f, maxz = 0.0f;
+    for (int i = 0; i < 8; ++i) {
+        FVector tmp = bodyB_ls[i] - lightSpaceOrigin;
+        if (tmp.Z > Epsilon) {
+            maxx = std::max(maxx, fabsf(tmp.X / tmp.Z));
+            maxy = std::max(maxy, fabsf(tmp.Y / tmp.Z));
+            maxz = std::max(maxz, tmp.Z);
+        }
+    }
+    
+    // === 8. Build Light Space Translate & Perspective (NVIDIA line 440-446) ===
+    FMatrix lsTranslate = FMatrix::Identity();
+    lsTranslate.Data[3][0] = -lightSpaceOrigin.X;
+    lsTranslate.Data[3][1] = -lightSpaceOrigin.Y;
+    lsTranslate.Data[3][2] = -lightSpaceOrigin.Z;
+    
+    // Standard perspective projection (matching LVP structure)
+    float fW = 2.0f * maxx * Nopt;
+    float fH = 2.0f * maxy * Nopt;
+    FMatrix lsPerspective = FMatrix::Identity();
+    lsPerspective.Data[0][0] = 2.0f * Nopt / fW;
+    lsPerspective.Data[1][1] = 2.0f * Nopt / fH;
+    lsPerspective.Data[2][2] = maxz / (maxz - Nopt);
+    lsPerspective.Data[3][2] = -Nopt * maxz / (maxz - Nopt);
+    lsPerspective.Data[2][3] = 1.0f;
+    lsPerspective.Data[3][3] = 0.0f;
+    
+    // === 9. Combine transformations ===
+    FMatrix combined = lightSpaceBasis * lsTranslate * lsPerspective;
+    
+    // === 10. Unit Cube Clipping (simplified, NVIDIA line 460-492) ===
+    FVector minNDC(FLT_MAX, FLT_MAX, FLT_MAX);
+    FVector maxNDC(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    
+    for (int i = 0; i < 8; ++i) {
+        FVector4 proj = FMatrix::VectorMultiply(FVector4(bodyB_eye[i], 1.0f), combined);
+        if (fabsf(proj.W) > Epsilon) {
+            FVector ndc(proj.X / proj.W, proj.Y / proj.W, proj.Z / proj.W);
+            minNDC.X = std::min(minNDC.X, ndc.X);
+            minNDC.Y = std::min(minNDC.Y, ndc.Y);
+            maxNDC.X = std::max(maxNDC.X, ndc.X);
+            maxNDC.Y = std::max(maxNDC.Y, ndc.Y);
+        }
+    }
+    
+    // Crop matrix (NVIDIA line 486-490) with Texel Snapping for temporal stability
+    float boxWidth = maxNDC.X - minNDC.X;
+    float boxHeight = maxNDC.Y - minNDC.Y;
+    float boxX = (maxNDC.X + minNDC.X) * 0.5f;
+    float boxY = (maxNDC.Y + minNDC.Y) * 0.5f;
+    
+    // === Texel Snapping to reduce temporal aliasing ===
+    // Calculate texel size in NDC space
+    float texelSizeX = boxWidth / ShadowMapWidth;
+    float texelSizeY = boxHeight / ShadowMapHeight;
+    
+    // Snap center to texel grid
+    boxX = floorf(boxX / texelSizeX) * texelSizeX;
+    boxY = floorf(boxY / texelSizeY) * texelSizeY;
+    
+    FMatrix clipMatrix = FMatrix::Identity();
+    if (boxWidth > Epsilon && boxHeight > Epsilon) {
+        clipMatrix.Data[0][0] = 2.0f / boxWidth;
+        clipMatrix.Data[1][1] = 2.0f / boxHeight;
+        clipMatrix.Data[3][0] = -2.0f * boxX / boxWidth;
+        clipMatrix.Data[3][1] = -2.0f * boxY / boxHeight;
+    }
+    
+    // === 11. Final output (NVIDIA line 494) ===
+    // NVIDIA: m_LightViewProj = m_View * lightSpaceBasis
+    // lightSpaceBasis already includes: basis * translate * perspective (after line 445-446)
+    
+    // Combined transform for LiSPSM (NVIDIA line 445-446 equivalent)
+    FMatrix lightSpaceTransform = lightSpaceBasis * lsTranslate * lsPerspective * clipMatrix;
+    
+    // For shadow map baking (shader multiplies: World * OutLightView * OutLightProj)
+    // We need: World -> EyeView -> lightSpaceTransform
+    // Use QuantizedEyeView for temporal stability
+    OutLightView = QuantizedEyeView * lightSpaceBasis * lsTranslate;
+    OutLightProj = lsPerspective * clipMatrix;
+    
+    // For shading: transform from EyeSpace to LightClip
+    // Shader does: World -> mul(View) -> EyeSpace -> mul(CameraClipToLightClip) -> LightClip
+    // So we need: EyeSpace -> LightClip = lightSpaceBasis * lsTranslate * lsPerspective * clipMatrix
+    FMatrix eyeToLightClip = lightSpaceBasis * lsTranslate * lsPerspective * clipMatrix;
+    OutPSMMatrix = eyeToLightClip;  // Used for shading (CameraClipToLightClip)
+    
+    UE_LOG("︠ LiSPSM: cosg=%.3f sing=%.3f Nopt=%.2f maxx=%.3f maxy=%.3f maxz=%.2f",
+        cosg, sing, Nopt, maxx, maxy, maxz);
+    UE_LOG("︠ LiSPSM NDC bounds: X[%.2f,%.2f] Y[%.2f,%.2f]",
+        minNDC.X, maxNDC.X, minNDC.Y, maxNDC.Y);
+    UE_LOG("︠ LiSPSM LightSpace bounds: X[%.2f,%.2f] Y[%.2f,%.2f] Z[%.2f,%.2f]",
+        lsMin.X, lsMax.X, lsMin.Y, lsMax.Y, lsMin.Z, lsMax.Z);
 }
 
 void FUpdateLightBufferPass::Release()

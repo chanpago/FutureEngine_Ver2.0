@@ -298,7 +298,7 @@ ID3D11RasterizerState* FRenderResourceFactory::GetRasterizerState(const FRenderS
 	RasterizerDesc.FillMode = Key.FillMode;
 	RasterizerDesc.CullMode = Key.CullMode;
 	RasterizerDesc.FrontCounterClockwise = TRUE;
-	RasterizerDesc.DepthClipEnable = TRUE;
+	RasterizerDesc.DepthClipEnable = FALSE;  // Disable depth clipping for better shadow stability (OpenGL's GL_DEPTH_CLAMP)
 
 	ID3D11RasterizerState* RasterizerState = nullptr;
 	if (FAILED(URenderer::GetInstance().GetDevice()->CreateRasterizerState(&RasterizerDesc, &RasterizerState)))
