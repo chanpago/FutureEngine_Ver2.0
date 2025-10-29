@@ -148,37 +148,6 @@ void UPointLightComponentWidget::RenderWidget()
         ImGui::SetTooltip("거리에 따라 밝기가 줄어드는 속도를 조절합니다.\n값이 클수록 감소가 더 급격합니다.");
     }
     
-    // Shadow parameters
-    float depthBias = PointLightComponent->GetBias();
-    if (ImGui::DragFloat("Shadow Bias", &depthBias, 0.0001f, 0.0f, 0.02f, "%.5f"))
-    {
-        PointLightComponent->SetBias(depthBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 깊이 바이어스(아크네 방지)");
-    }
-
-    float slopeBias = PointLightComponent->GetSlopeBias();
-    if (ImGui::DragFloat("Slope Bias", &slopeBias, 0.0005f, 0.0f, 0.2f, "%.5f"))
-    {
-        PointLightComponent->SetSlopeBias(slopeBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("경사(법선) 기반 추가 바이어스");
-    }
-
-    float sharpen = PointLightComponent->GetSharpen();
-    if (ImGui::DragFloat("Sharpen", &sharpen, 0.05f, 0.0f, 3.0f, "%.2f"))
-    {
-        PointLightComponent->SetSharpen(sharpen);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 경계 선명도");
-    }
-    
     ImGui::PopStyleColor(3);
 
     // Override camera with light's perspective (position only) + auto-restore
@@ -238,6 +207,99 @@ void UPointLightComponentWidget::RenderWidget()
         Cam3->SetLocation(PointLightComponent->GetWorldLocation());
         Cam3->SetNearZ(0.05f);
         Cam3->SetFarZ(std::max(PointLightComponent->GetAttenuationRadius(), 10.0f));
+    }
+
+    ImGui::Separator();
+
+    // Shadow Settings Section
+    if (ImGui::CollapsingHeader("Shadow Settings", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+
+        // Shadow Resolution Scale
+        float ShadowResolutionScale = PointLightComponent->GetShadowResolutionScale();
+        if (ImGui::SliderFloat("Shadow Resolution Scale", &ShadowResolutionScale, 0.25f, 4.0f, "%.2f"))
+        {
+            PointLightComponent->SetShadowwResolutionScale(ShadowResolutionScale);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Shadow resolution scale using 3-Tier system:\n\n"
+                "Low Tier  (512x512):  Scale 0.25 ~ 0.75\n"
+                "Mid Tier  (1024x1024): Scale 0.76 ~ 1.5\n"
+                "High Tier (2048x2048): Scale 1.51 ~ 4.0\n\n"
+                "Each tier can hold up to 8 lights.\n"
+                "Lights are automatically grouped by resolution tier."
+            );
+        }
+
+        // Determine which tier this light would be in
+        const char* tierName;
+        int tierResolution;
+        ImVec4 tierColor;
+
+        if (ShadowResolutionScale <= 0.75f)
+        {
+            tierName = "Low Tier";
+            tierResolution = 512;
+            tierColor = ImVec4(0.5f, 0.8f, 1.0f, 1.0f); // Light blue
+        }
+        else if (ShadowResolutionScale <= 1.5f)
+        {
+            tierName = "Mid Tier";
+            tierResolution = 1024;
+            tierColor = ImVec4(0.5f, 1.0f, 0.5f, 1.0f); // Light green
+        }
+        else
+        {
+            tierName = "High Tier";
+            tierResolution = 2048;
+            tierColor = ImVec4(1.0f, 0.8f, 0.3f, 1.0f); // Gold
+        }
+
+        // Display tier information
+        ImGui::Text("Resolution Tier: ");
+        ImGui::SameLine();
+        ImGui::TextColored(tierColor, "%s", tierName);
+        ImGui::Text("Actual Shadow Resolution: %d x %d", tierResolution, tierResolution);
+
+        // Shadow Bias
+        float ShadowBias = PointLightComponent->GetShadowBias();
+        if (ImGui::DragFloat("Shadow Bias", &ShadowBias, 0.0001f, 0.0f, 0.01f, "%.4f"))
+        {
+            PointLightComponent->SetShadowBias(ShadowBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 깊이 바이어스\n섀도우 아크네(그림자 얼룩) 방지\n기본값: 0.001");
+        }
+
+        // Shadow Slope Bias
+        float ShadowSlopeBias = PointLightComponent->GetShadowSlopeBias();
+        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 0.2f, "%.2f"))
+        {
+            PointLightComponent->SetShadowSlopeBias(ShadowSlopeBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 경사 바이어스\nPSM(Perspective Shadow Maps) 사용 시\n표면 각도에 따른 바이어스 조절");
+        }
+
+        // Shadow Sharpen
+        float ShadowSharpen = PointLightComponent->GetShadowSharpen();
+        if (ImGui::DragFloat("Shadow Sharpen", &ShadowSharpen, 0.01f, 0.0f, 1.0f, "%.2f"))
+        {
+            PointLightComponent->SetShadowSharpen(ShadowSharpen);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 엣지 샤프닝\n그림자 경계를 더 선명하게");
+        }
+
+        ImGui::PopStyleColor(3);
     }
 
     ImGui::Separator();
@@ -334,11 +396,49 @@ void UPointLightComponentWidget::RenderWidget()
                     DC->PSSetSamplers(0, 1, &R.Sampler);
                     DC->PSSetConstantBuffers(0, 1, &R.CB);
 
+                    // Determine which tier this light belongs to based on shadow resolution scale
+                    float scale = PointLightComponent->GetShadowResolutionScale();
+                    scale = std::clamp(scale, 0.25f, 4.0f);
+
+                    uint32 tierIndex;
+                    ID3D11Texture2D* tierTexture = nullptr;
+                    if (scale <= 0.75f)
+                    {
+                        tierIndex = 0; // Low Tier
+                        tierTexture = DeviceResources->GetPointShadowLowTierTexture();
+                    }
+                    else if (scale <= 1.5f)
+                    {
+                        tierIndex = 1; // Mid Tier
+                        tierTexture = DeviceResources->GetPointShadowMidTierTexture();
+                    }
+                    else
+                    {
+                        tierIndex = 2; // High Tier
+                        tierTexture = DeviceResources->GetPointShadowHighTierTexture();
+                    }
+
                     // Render 6 faces into a 3x2 mosaic
                     for (int face = 0; face < 6; ++face)
                     {
+                        // Create SRV for this specific face slice from the appropriate tier texture
+                        const UINT sliceIndex = CubeIdx * 6 + face;
                         ID3D11ShaderResourceView* FaceSRV = nullptr;
-                        if (!DeviceResources->CreatePointShadowFaceSRV(CubeIdx, (UINT)face, &FaceSRV) || !FaceSRV)
+
+                        if (tierTexture)
+                        {
+                            D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+                            srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+                            srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+                            srvDesc.Texture2DArray.MostDetailedMip = 0;
+                            srvDesc.Texture2DArray.MipLevels = 1;
+                            srvDesc.Texture2DArray.FirstArraySlice = sliceIndex;
+                            srvDesc.Texture2DArray.ArraySize = 1;
+
+                            if (FAILED(Device->CreateShaderResourceView(tierTexture, &srvDesc, &FaceSRV)) || !FaceSRV)
+                                continue;
+                        }
+                        else
                             continue;
 
                         const int cx = face % Cols;

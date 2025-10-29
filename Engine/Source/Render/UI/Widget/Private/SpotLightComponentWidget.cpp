@@ -170,36 +170,7 @@ void USpotLightComponentWidget::RenderWidget()
         ImGui::SetTooltip("스포트라이트 원뿔의 안쪽 가장자리 각도입니다.\n이 각도 안쪽은 최대 밝기입니다.");
     }
     
-    // Shadow parameters
-    float depthBias = SpotLightComponent->GetBias();
-    if (ImGui::DragFloat("Shadow Bias", &depthBias, 0.0001f, 0.0f, 0.02f, "%.5f"))
-    {
-        SpotLightComponent->SetBias(depthBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 깊이 바이어스(아크네 방지)");
-    }
-
-    float slopeBias = SpotLightComponent->GetSlopeBias();
-    if (ImGui::DragFloat("Slope Bias", &slopeBias, 0.0005f, 0.0f, 0.2f, "%.5f"))
-    {
-        SpotLightComponent->SetSlopeBias(slopeBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("경사(법선) 기반 추가 바이어스");
-    }
-
-    float sharpen = SpotLightComponent->GetSharpen();
-    if (ImGui::DragFloat("Sharpen", &sharpen, 0.05f, 0.0f, 3.0f, "%.2f"))
-    {
-        SpotLightComponent->SetSharpen(sharpen);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 경계 선명도");
-    }
+  
 
     ImGui::PopStyleColor(3);
     
@@ -283,6 +254,101 @@ void USpotLightComponentWidget::RenderWidget()
         Cam2->SetNearZ(0.05f);
         Cam2->SetFarZ(std::max(SpotLightComponent->GetAttenuationRadius(), 10.0f));
     }
+
+    // Shadow Settings Section
+    if (ImGui::CollapsingHeader("Shadow Settings", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+
+        // Shadow Resolution Scale
+        float ShadowResolutionScale = SpotLightComponent->GetShadowResolutionScale();
+        if (ImGui::SliderFloat("Shadow Resolution Scale", &ShadowResolutionScale, 0.25f, 4.0f, "%.2f"))
+        {
+            SpotLightComponent->SetShadowwResolutionScale(ShadowResolutionScale);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Shadow resolution scale using 3-Tier system:\n\n"
+                "Low Tier  (512x512):  Scale 0.25 ~ 0.75\n"
+                "Mid Tier  (1024x1024): Scale 0.76 ~ 1.5\n"
+                "High Tier (2048x2048): Scale 1.51 ~ 4.0\n\n"
+                "Each tier can hold up to 8 lights.\n"
+                "Lights are automatically grouped by resolution tier."
+            );
+        }
+
+        // Determine which tier this light would be in
+        const char* tierName;
+        int tierResolution;
+        ImVec4 tierColor;
+
+        if (ShadowResolutionScale <= 0.75f)
+        {
+            tierName = "Low Tier";
+            tierResolution = 512;
+            tierColor = ImVec4(0.5f, 0.8f, 1.0f, 1.0f); // Light blue
+        }
+        else if (ShadowResolutionScale <= 1.5f)
+        {
+            tierName = "Mid Tier";
+            tierResolution = 1024;
+            tierColor = ImVec4(0.5f, 1.0f, 0.5f, 1.0f); // Light green
+        }
+        else
+        {
+            tierName = "High Tier";
+            tierResolution = 2048;
+            tierColor = ImVec4(1.0f, 0.8f, 0.3f, 1.0f); // Gold
+        }
+
+        // Display tier information
+        ImGui::Text("Resolution Tier: ");
+        ImGui::SameLine();
+        ImGui::TextColored(tierColor, "%s", tierName);
+        ImGui::Text("Actual Shadow Resolution: %d x %d", tierResolution, tierResolution);
+
+        // Shadow Bias
+        float ShadowBias = SpotLightComponent->GetShadowBias();
+        if (ImGui::DragFloat("Shadow Bias", &ShadowBias, 0.0001f, 0.0f, 0.01f, "%.4f"))
+        {
+            SpotLightComponent->SetShadowBias(ShadowBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 깊이 바이어스\n섀도우 아크네(그림자 얼룩) 방지\n기본값: 0.001");
+        }
+
+        // Shadow Slope Bias
+        float ShadowSlopeBias = SpotLightComponent->GetShadowSlopeBias();
+        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 0.2f, "%.2f"))
+        {
+            SpotLightComponent->SetShadowSlopeBias(ShadowSlopeBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 경사 바이어스\nPSM(Perspective Shadow Maps) 사용 시\n표면 각도에 따른 바이어스 조절");
+        }
+
+        // Shadow Sharpen
+        float ShadowSharpen = SpotLightComponent->GetShadowSharpen();
+        if (ImGui::DragFloat("Shadow Sharpen", &ShadowSharpen, 0.01f, 0.0f, 1.0f, "%.2f"))
+        {
+            SpotLightComponent->SetShadowSharpen(ShadowSharpen);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 엣지 샤프닝\n그림자 경계를 더 선명하게");
+        }
+
+        ImGui::PopStyleColor(3);
+    }
+
+    ImGui::Separator();
+
+
 
     // Shadow Map Preview
     if (ImGui::CollapsingHeader("Shadow Map Preview"))

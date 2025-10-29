@@ -127,36 +127,6 @@ void UDirectionalLightComponentWidget::RenderWidget()
         ImGui::SetTooltip("디렉셔널 라이트 밝기\n범위: 0.0(꺼짐) ~ 20.0(최대)");
     }
 
-    // Shadow parameters
-    float depthBias = DirectionalLightComponent->GetBias();
-    if (ImGui::DragFloat("Shadow Bias", &depthBias, 0.0001f, 0.0f, 0.02f, "%.5f"))
-    {
-        DirectionalLightComponent->SetBias(depthBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 깊이 바이어스(아크네 방지)\n작을수록 정확하지만 아크네가 생길 수 있습니다.");
-    }
-
-    float slopeBias = DirectionalLightComponent->GetSlopeBias();
-    if (ImGui::DragFloat("Slope Bias", &slopeBias, 0.0005f, 0.0f, 0.2f, "%.5f"))
-    {
-        DirectionalLightComponent->SetSlopeBias(slopeBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("경사(법선) 기반 추가 바이어스\n사선 표면의 셀프 섀도잉을 줄입니다.");
-    }
-
-    float sharpen = DirectionalLightComponent->GetSharpen();
-    if (ImGui::DragFloat("Sharpen", &sharpen, 0.05f, 0.0f, 3.0f, "%.2f"))
-    {
-        DirectionalLightComponent->SetSharpen(sharpen);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 경계 선명도\n값이 크면 경계가 더 또렷해집니다.");
-    }
     
     ImGui::PopStyleColor(3);
 
@@ -225,6 +195,100 @@ void UDirectionalLightComponentWidget::RenderWidget()
         Cam->SetRotation(FVector(0.0f, pitchDeg, yawDeg));
     }
 
+    // Shadow Settings Section
+    if (ImGui::CollapsingHeader("Shadow Settings", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+
+        // Shadow Resolution Scale
+        float ShadowResolutionScale = DirectionalLightComponent->GetShadowResolutionScale();
+        if (ImGui::SliderFloat("Shadow Resolution Scale", &ShadowResolutionScale, 0.25f, 4.0f, "%.2f"))
+        {
+            DirectionalLightComponent->SetShadowwResolutionScale(ShadowResolutionScale);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Shadow resolution scale using 3-Tier system:\n\n"
+                "Low Tier  (1024x1024): Scale 0.25 ~ 0.75\n"
+                "Mid Tier  (2048x2048): Scale 0.76 ~ 1.5\n"
+                "High Tier (4096x4096): Scale 1.51 ~ 4.0\n\n"
+                "Directional light uses higher resolutions\n"
+                "to cover larger scene areas."
+            );
+        }
+
+        // Determine which tier this light would be in
+        const char* tierName;
+        int tierResolution;
+        ImVec4 tierColor;
+
+        if (ShadowResolutionScale <= 0.75f)
+        {
+            tierName = "Low Tier";
+            tierResolution = 1024;
+            tierColor = ImVec4(0.5f, 0.8f, 1.0f, 1.0f); // Light blue
+        }
+        else if (ShadowResolutionScale <= 1.5f)
+        {
+            tierName = "Mid Tier";
+            tierResolution = 2048;
+            tierColor = ImVec4(0.5f, 1.0f, 0.5f, 1.0f); // Light green
+        }
+        else
+        {
+            tierName = "High Tier";
+            tierResolution = 4096;
+            tierColor = ImVec4(1.0f, 0.8f, 0.3f, 1.0f); // Gold
+        }
+
+        // Display tier information
+        ImGui::Text("Resolution Tier: ");
+        ImGui::SameLine();
+        ImGui::TextColored(tierColor, "%s", tierName);
+        ImGui::Text("Actual Shadow Resolution: %d x %d", tierResolution, tierResolution);
+
+        // Shadow Bias
+        float ShadowBias = DirectionalLightComponent->GetShadowBias();
+        if (ImGui::DragFloat("Shadow Bias", &ShadowBias, 0.0001f, 0.0f, 0.01f, "%.4f"))
+        {
+            DirectionalLightComponent->SetShadowBias(ShadowBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 깊이 바이어스\n섀도우 아크네(그림자 얼룩) 방지\n기본값: 0.001");
+        }
+
+        // Shadow Slope Bias
+        float ShadowSlopeBias = DirectionalLightComponent->GetShadowSlopeBias();
+        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 0.2f, "%.2f"))
+        {
+            DirectionalLightComponent->SetShadowSlopeBias(ShadowSlopeBias);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 경사 바이어스\nPSM(Perspective Shadow Maps) 사용 시\n표면 각도에 따른 바이어스 조절");
+        }
+
+        // Shadow Sharpen
+        float ShadowSharpen = DirectionalLightComponent->GetShadowSharpen();
+        if (ImGui::DragFloat("Shadow Sharpen", &ShadowSharpen, 0.01f, 0.0f, 1.0f, "%.2f"))
+        {
+            DirectionalLightComponent->SetShadowSharpen(ShadowSharpen);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("섀도우 엣지 샤프닝\n그림자 경계를 더 선명하게");
+        }
+
+        ImGui::PopStyleColor(3);
+    }
+
+    ImGui::Separator();
+
+
     // Shadow Map Preview
     if (ImGui::CollapsingHeader("Shadow Map Preview"))
     {
@@ -244,6 +308,13 @@ void UDirectionalLightComponentWidget::RenderWidget()
 
         ImGui::SeparatorText("Cascaded Shadow Maps");
         static int cascadePreviewIndex = 0;
+
+        float csmLambda = DirectionalLightComponent->GetCSMLambda();
+        if (ImGui::SliderFloat("CSM Lambda", &csmLambda, 0.0f, 1.0f))
+        {
+            DirectionalLightComponent->SetCSMLambda(csmLambda);
+        }
+
         int numActiveCascades = 8;
         ImGui::SliderInt("Preview Index", &cascadePreviewIndex, 0, numActiveCascades - 1);
         

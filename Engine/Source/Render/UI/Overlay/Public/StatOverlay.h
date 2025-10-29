@@ -11,7 +11,8 @@ enum class EStatType : uint8
 	Picking =	1 << 2,  // 4
 	Decal =		1 << 3,  // 8
 	Time =		1 << 4,	 // 16
-	All = FPS | Memory | Picking | Time | Decal
+	Shadow =    1 << 5,  // 32
+	All = FPS | Memory | Picking | Time | Decal | Shadow
 };
 
 UCLASS()
@@ -31,6 +32,7 @@ public:
 	void ShowPicking() { IsStatEnabled(EStatType::Picking) ? DisableStat(EStatType::Picking) : EnableStat(EStatType::Picking); }
 	void ShowTime() { IsStatEnabled(EStatType::Time) ? DisableStat(EStatType::Time) : EnableStat(EStatType::Time); }
 	void ShowDecal() { IsStatEnabled(EStatType::Decal) ? DisableStat(EStatType::Decal) : EnableStat(EStatType::Decal); }
+	void ShowShadow() { IsStatEnabled(EStatType::Shadow) ? DisableStat(EStatType::Shadow) : EnableStat(EStatType::Shadow); }
 	void ShowAll() { IsStatEnabled(EStatType::All) ? DisableStat(EStatType::All) : EnableStat(EStatType::All); }
 
 	// API to update stats
@@ -43,6 +45,7 @@ private:
 	void RenderPicking(ID2D1DeviceContext* d2dCtx);
 	void RenderDecalInfo(ID2D1DeviceContext* D2DCtx);
 	void RenderTimeInfo(ID2D1DeviceContext* d2dCtx);
+	void RenderShadowInfo(ID2D1DeviceContext* d2dCtx);
 	void RenderText(ID2D1DeviceContext* d2dCtx, const FString& Text, float X, float Y, float R, float G, float B);
 	template <typename T>
 	inline void SafeRelease(T*& ptr)

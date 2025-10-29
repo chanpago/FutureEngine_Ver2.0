@@ -83,19 +83,29 @@ public:
 
     void RefreshVisualizationBillboardBinding();
 
+    void SetShadowwResolutionScale(float InShadowResolutionScale) { ShadowResolutionScale = InShadowResolutionScale; }
+    void SetShadowBias(float InShadowBias) { ShadowBias = InShadowBias; }
+    void SetShadowSlopeBias(float InShadowSlopeBias) { ShadowSlopeBias = InShadowSlopeBias; }
+    void SetShadowSharpen(float InShadowSharpen) { ShadowSharpen = InShadowSharpen; }
 
+    float GetShadowResolutionScale() const{ return ShadowResolutionScale; }
     float GetShadowBias() const  { return ShadowBias; }
-    float GetShadowSlopeBias() const {return ShadowSlopeBias;}
-    
+    float GetShadowSlopeBias() const { return ShadowSlopeBias;}
+    float GetShadowSharpen() const { return ShadowSharpen; }
+
 protected:
     void UpdateVisualizationBillboardTint();
 
     UBillBoardComponent* VisualizationBillboard = nullptr;
 
-    float ShadowResolutionScale;
-    float ShadowBias;
-    float ShadowSlopeBias;
-    float ShadowSharpen;
+    /** Shadow map resolution scale (0.25 = 25%, 1.0 = 100%, 2.0 = 200%) */
+    float ShadowResolutionScale = 1.0f;
+    /** Shadow depth bias to reduce shadow acne */
+    float ShadowBias = 0.001f;
+    /** Shadow slope bias (used with PSM) */
+    float ShadowSlopeBias = 0.1f;
+    /** Shadow edge sharpening factor */
+    float ShadowSharpen = 0.0f;
 private:
     
 };

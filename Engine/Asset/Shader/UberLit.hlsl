@@ -125,11 +125,15 @@ cbuffer ShadowMapConstants : register(b6)
     row_major float4x4 LightViewP[MAX_CASCADES]; // V_L'
     row_major float4x4 LightProjP[MAX_CASCADES]; // P_L'
     row_major float4x4 LightViewPInv[MAX_CASCADES]; // (V'_L)^(-1)
+    
+    float4 CascadeSplits[MAX_CASCADES / 4];
+    uint NumCascades;
+    float3 pad0;
 
     row_major float4x4 CameraClipToLightClip;
     
     float4 ShadowParams;               // x=bias, y=slopeBias, z=sharpen, w=reserved
-    float4 CascadeSplits;
+    float4 NotUsedCascadeSplits;
     float3 LightDirWS;                 // 월드공간 광원 방향
     uint   bInvertedLight;             // 0: normal, 1: inverted
 
@@ -140,7 +144,7 @@ cbuffer ShadowMapConstants : register(b6)
     uint bUseVSM;
     uint bUsePCF;
     uint bUseCSM;
-    float2 pad;
+    float2 pad1;
 };
 
 StructuredBuffer<int> PointLightIndices : register(t6);
@@ -163,16 +167,31 @@ struct FSpotShadowAtlasEntry
 };
 StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 
-// Point light shadow cube array and mapping (multiple point lights)
-TextureCubeArray PointShadowCubes : register(t14);
-StructuredBuffer<uint> PointShadowCubeIndices : register(t15);
-// Alternate 2D array view for PCF sampling
-Texture2DArray PointShadow2DArray : register(t16);
-// Moments 2D array for VSM (R32G32_FLOAT)
-Texture2DArray PointShadowMoments2DArray : register(t17);
+// Point light shadow 3-Tier system
+struct FPointShadowTierMapping
+{
+    uint Tier;           // 0=Low(512), 1=Mid(1024), 2=High(2048), 0xFFFFFFFF=no shadow
+    uint TierLocalIndex; // 0-7 within the tier's cube array
+};
+StructuredBuffer<FPointShadowTierMapping> PointShadowTierMappings : register(t14);
+
+// Low Tier (512x512) - Slots 15-17
+TextureCubeArray PointShadowLowTierCubes : register(t15);
+Texture2DArray PointShadowLowTier2DArray : register(t16);
+Texture2DArray PointShadowLowTierMoments : register(t17);
+
+
+// Mid Tier (1024x1024) - Slots 18-20
+TextureCubeArray PointShadowMidTierCubes : register(t18);
+Texture2DArray PointShadowMidTier2DArray : register(t19);
+Texture2DArray PointShadowMidTierMoments : register(t20);
+
+// High Tier (2048x2048) - Slots 21-23
+TextureCubeArray PointShadowHighTierCubes : register(t21);
+Texture2DArray PointShadowHighTier2DArray : register(t22);
+Texture2DArray PointShadowHighTierMoments : register(t23);
 
 float3 SafeNormalize3(float3 v);
-
 
 uint GetDepthSliceIdx(float ViewZ)
 {
@@ -303,7 +322,7 @@ struct PS_OUTPUT
     float4 NormalData : SV_Target1;
 };
 
-float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
+float CalculateVSM(float2 Moments, float CurrentDepth, float Bias, float Sharpen)
 {
     // VSM: configurable smoothing via mip bias
     static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
@@ -319,6 +338,9 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
     float d = z - m1;
     float pMax = saturate(variance / (variance + d * d));
 
+    float sharpenPower = 1.0f + Sharpen * 15.0f; // Sharpen 0~1 -> Power 1~16
+    pMax = pow(saturate(pMax), sharpenPower);
+    
     // Light bleeding reduction
     float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
     return visibility;
@@ -343,17 +365,19 @@ inline float ShadowPCF2D(Texture2D DepthTex, SamplerComparisonState Comp, float2
 }
 
 // 2D VSM from moments texture
-inline float ShadowVSM2D(Texture2D MomentsTex, SamplerState Samp, float2 uv, float currentDepth, float mipBias)
+inline float ShadowVSM2D(Texture2D MomentsTex, SamplerState Samp, float2 uv, float currentDepth, float mipBias, float Sharpen)
 {
     float2 mom = MomentsTex.SampleBias(Samp, uv, mipBias).rg;
-    return CalculateVSM(mom, currentDepth, mipBias);
+    return CalculateVSM(mom, currentDepth, mipBias, Sharpen);
 }
 
 // 2D array VSM (e.g., cascades)
-inline float ShadowVSM2DArray(Texture2DArray MomentsTex, SamplerState Samp, float3 uvLayer, float currentDepth, float mipBias)
+inline float ShadowVSM2DArray(Texture2DArray MomentsTex, SamplerState Samp, float3 uvLayer, float currentDepth, float mipBias, float Sharpen)
 {
-    float2 mom = MomentsTex.Sample(Samp, uvLayer).rg; // Biasing for arrays can be driver-limited; keep 0 bias
-    return CalculateVSM(mom, currentDepth, mipBias);
+    // Prefer clamp sampling and explicit LOD for stability across cascades
+    static const float VSM_LOD = 1.0f; // tweakable softness via lower-res moments
+    float2 mom = MomentsTex.SampleLevel(Samp, uvLayer, VSM_LOD).rg;
+    return CalculateVSM(mom, currentDepth, mipBias, Sharpen);
 }
 
 // 2D array PCF (3x3)
@@ -371,152 +395,82 @@ inline float ShadowPCF2DArray(Texture2DArray DepthTex, SamplerComparisonState Co
     return sum / 9.0f;
 }
 
-// 반환: 가시도(1=조명 통과, 0=완전 그림자)
-// Shadow Map 샘플링 함수
-/*float CalculateShadowFactor(float3 WorldPos)
+float SampleCascadeShadowValue(float3 WorldPosition, int Cascade)
 {
-    // 안전 검사: Light View/Projection Matrix가 Identity면 Shadow 없음
-    // (이는 Shadow Map이 아직 렌더링되지 않았음을 의미)
-    if (abs(LightViewP[0][0][0] - 1.0f) < 0.001f && abs(LightViewP[0][1][1] - 1.0f) < 0.001f)
-    {
-        return 1.0f; // Shadow 없음
-    }
-    
-    // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
-    float ViewDepth = mul(float4(WorldPos, 1.0f), View).z;
-    
-    // 최종 그림자 값 (1.0 = 빛, 0.0 = 그림자)
-    float Shadow = 1.0f;
-    
-    if (bUseCSM != 0)  // CSM + VSM(?)
-    {
-        int CascadeIndex = 0;
-        if (ViewDepth > CascadeSplits.x)
-            CascadeIndex = 1;
-        if (ViewDepth > CascadeSplits.y)
-            CascadeIndex = 2;
-        if (ViewDepth > CascadeSplits.z)
-            CascadeIndex = 3;
-        
-        float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightViewP[CascadeIndex]);
-        LightSpacePos = mul(LightSpacePos, LightProjP[CascadeIndex]);
-        LightSpacePos.xyz /= LightSpacePos.w;
-        
-        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-        ShadowUV.y = 1.0f - ShadowUV.y;
-        
-        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-            return 1.0f;
-        
-        float CurrentDepth = LightSpacePos.z;
-        // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
-        // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-        
-        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
-        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
-        Shadow = CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
-    }
-    else // only VSM
-    {
-        // World Position을 Light 공간으로 변환
-        float4 LightSpacePos = mul(float4(WorldPos, 1.0f), LightViewP[0]);
-        LightSpacePos = mul(LightSpacePos, LightProjP[0]);
-    
-        // Perspective Division (Orthographic이면 w=1이지만 일관성을 위해 수행)
-        LightSpacePos.xyz /= LightSpacePos.w;
-    
-        // NDC [-1,1] -> Texture UV [0,1] 변환
-        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-        ShadowUV.y = 1.0f - ShadowUV.y; // Y축 반전 (DirectX UV 좌표계)
-    
-        // Shadow Map 범위 밖이면 그림자 없음 (1.0 = 밝음)
-        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-            return 1.0f;
-        
-        // 현재 픽셀의 Light 공간 Depth
-        float CurrentDepth = LightSpacePos.z;
-        
-        if (bUseVSM == 0)
-        {
-            // Classic depth compare
-            float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-            Shadow = (CurrentDepth - ShadowParams.x) > ShadowMapDepth ? 0.0f : 1.0f;
-        }
-        else
-        {
-            // VSM: configurable smoothing via mip bias
-            static const float VSM_MipBias = 1.25f; // Increase for softer shadows
-
-            // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
-            float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
-            Shadow = CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
-        }
-    }
-    
-    return Shadow;
-}*/
-
-float SampleShadowCSM(float3 worldPos, float viewDepth)
-{
-    // Select Cascade
-    int CascadeIndex = 0;
-    if (viewDepth > CascadeSplits.x)
-        CascadeIndex = 1;
-    if (viewDepth > CascadeSplits.y)
-        CascadeIndex = 2;
-    if (viewDepth > CascadeSplits.z)
-        CascadeIndex = 3;
-       
-    // World to Light Space
-    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[CascadeIndex]);
-    LightSpacePos = mul(LightSpacePos, LightProjP[CascadeIndex]);
-    LightSpacePos.xyz /= LightSpacePos.w;
-        
-    // NDC[-1.1] to UV[0,1]
-    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-    ShadowUV.y = 1.0f - ShadowUV.y;
-    float CurrentDepth = LightSpacePos.z;
-        
-    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+    float4 LightPosition = mul(float4(WorldPosition, 1.0f), LightViewP[Cascade]);
+    LightPosition = mul(LightPosition, LightProjP[Cascade]);
+    LightPosition.xyz /= LightPosition.w;
+    float2 ShadowTextureUv = LightPosition.xy * 0.5f + 0.5f;
+    ShadowTextureUv.y = 1.0f - ShadowTextureUv.y;
+    if (ShadowTextureUv.x < 0.0f || ShadowTextureUv.x > 1.0f || ShadowTextureUv.y < 0.0f || ShadowTextureUv.y > 1.0f)
         return 1.0f;
-        
-    // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
-    // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-        
-    float bias = Directional.Bias;
-    
+    float CurrentDepth = LightPosition.z;
+
+    float Bias = Directional.Bias;
     if (bUsePCF)
     {
-        // ---------------- 3x3 PCF FILTER ----------------
-        uint Width, Height, Layers;
-        CascadedShadowMapTexture.GetDimensions(Width, Height, Layers);
-        float2 TexelSize = 1.0f / float2(Width, Height);
-
-        float ShadowSum = 0.0f;
+        uint Width, Height, Layers; CascadedShadowMapTexture.GetDimensions(Width, Height, Layers);
+        float2 TexelSize = 1.0 / float2(max(1u,Width), max(1u,Height));
+        float FilteredSum = 0.0f;
         [unroll] for (int dy = -1; dy <= 1; ++dy)
-        [unroll] for (int dx = -1; dx <= 1; ++dx)
-        {
-            float2 Offset = float2(dx, dy) * TexelSize;
-            ShadowSum += CascadedShadowMapTexture.SampleCmpLevelZero(
-            SamplerPCF, float3(ShadowUV + Offset, CascadeIndex),
-            CurrentDepth - bias);
-        }
-
-        return ShadowSum / 9.0f;
+            [unroll] for (int dx = -1; dx <= 1; ++dx)
+            {
+                float2 Offset = float2(dx, dy) * TexelSize;
+                FilteredSum += CascadedShadowMapTexture.SampleCmpLevelZero(SamplerPCF,
+                    float3(ShadowTextureUv + Offset, Cascade), CurrentDepth - Bias);
+            }
+        return FilteredSum / 9.0f;
     }
     else if (bUseVSM)
     {
-        // ---------------- VARIANCE SHADOW MAPPING ----------------
-        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
-        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
-        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+        static const float VSMMipBias = 1.25f;
+        return ShadowVSM2DArray(CascadedShadowMapTexture, SamplerLinearClamp, float3(ShadowTextureUv, Cascade),
+            CurrentDepth, VSMMipBias, Directional.Sharpen);
     }
     else
     {
-        // ---------------- HARD COMPARE (TMP) ----------------
-        float ShadowMapDepth = CascadedShadowMapTexture.SampleLevel(SamplerLinearClamp, float3(ShadowUV, CascadeIndex), 0).r;
-        return (CurrentDepth - bias) <= ShadowMapDepth ? 1.0f : 0.0f;
+        float ShadowMapDepth = CascadedShadowMapTexture.SampleLevel(SamplerLinearClamp, float3(ShadowTextureUv, Cascade), 0).r;
+        return (CurrentDepth - Bias) <= ShadowMapDepth ? 1.0f : 0.0f;
     }
+}
+
+float SampleShadowCSM(float3 WorldPosition, float ViewDepth)
+{
+    int CascadeIndex = 0;
+    [unroll] for (int i = 0; i < MAX_CASCADES; ++i)
+    {
+        float splitValue = CascadeSplits[i / 4][i % 4];
+        if (ViewDepth > splitValue)
+        {
+            CascadeIndex++;
+        }
+    }
+       
+    // Cascade fade to hide transitions
+    float NearSplit = 0.0f;
+    float FarSplit = 0.0f;
+    if (CascadeIndex == 0) { NearSplit = 0.0f;               FarSplit = CascadeSplits[0][0]; }
+    if (CascadeIndex == 1) { NearSplit = CascadeSplits[0][0];    FarSplit = CascadeSplits[0][1]; }
+    if (CascadeIndex == 2) { NearSplit = CascadeSplits[0][1];    FarSplit = CascadeSplits[0][2]; }
+    if (CascadeIndex == 3) { NearSplit = CascadeSplits[0][2];    FarSplit = CascadeSplits[0][3]; }
+    if (CascadeIndex == 4) { NearSplit = CascadeSplits[0][3];    FarSplit = CascadeSplits[1][0]; }
+    if (CascadeIndex == 5) { NearSplit = CascadeSplits[1][0];    FarSplit = CascadeSplits[1][1]; }
+    if (CascadeIndex == 6) { NearSplit = CascadeSplits[1][1];    FarSplit = CascadeSplits[1][2]; }
+    if (CascadeIndex == 7) { NearSplit = CascadeSplits[1][2];    FarSplit = CascadeSplits[1][3]; }
+    
+
+    // Blend width is a fraction of the cascade depth range
+    const float CascadeBlendFraction = 0.15f;
+    float BlendWidth = max(1e-4f, (FarSplit - NearSplit) * CascadeBlendFraction);
+    float BlendFactor = saturate((FarSplit - ViewDepth) / BlendWidth); // 1 → inside cascade, 0 → at far boundary
+
+    float CurrentCascadeShadow = SampleCascadeShadowValue(WorldPosition, CascadeIndex);
+    if (CascadeIndex < 7)
+    {
+        float NextCascadeShadow = SampleCascadeShadowValue(WorldPosition, CascadeIndex + 1);
+        return lerp(NextCascadeShadow, CurrentCascadeShadow, BlendFactor);
+    }
+    return CurrentCascadeShadow;
 }
 
 float PSM_Visibility(float3 worldPos)
@@ -594,7 +548,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     else if (bUseVSM != 0)
     {
         static const float VSM_MipBias = 1.25f; // tweakable softness
-        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth, VSM_MipBias);
+        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth, VSM_MipBias, Directional.Sharpen);
     }
     return 1.0f;
 }
@@ -606,6 +560,10 @@ float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
     float2 ShadowUV;
     float CurrentDepth;
     
+    if (bUseCSM != 0)
+    {
+        return SampleShadowCSM(worldPos, ViewDepth);
+    }
     if (bUsePSM > 0.5f)
     {
         // LiSPSM Path: World -> EyeSpace -> LightSpace transformation
@@ -647,14 +605,7 @@ float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
     float ndotl_abs = abs(dot(worldNormal, Ldir));
     float combinedBias = Directional.Bias + Directional.SlopeBias * (1.0f - ndotl_abs);
     
-    // CSM check
-    if (bUseCSM > 0.5f)
-    {
-        return SampleShadowCSM(worldPos, ViewDepth);
-    }
-    
-    // Shadow sampling
-    if (((bUseVSM < 0.5f) && (bUsePCF < 0.5f)) || ((bUseVSM > 0.5f) && (bUsePCF > 0.5f)))
+    if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
         float sd = ShadowMapTexture.SampleLevel(SamplerWrap, ShadowUV, 0).r;
@@ -667,7 +618,7 @@ float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
     else if (bUseVSM > 0.5f)
     {
         static const float VSM_MipBias = 1.25f;
-        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth - combinedBias, VSM_MipBias);
+        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth - combinedBias, VSM_MipBias, Directional.Sharpen);
     }
     
     return 1.0f;
@@ -742,7 +693,7 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos, float3 w
     if (bUseVSM != 0)
     {
         static const float VSM_MipBias = 0.0f; // could increase for softer
-        return ShadowVSM2D(SpotShadowMapTexture, SamplerLinearClamp, uvAtlas, currentDepth, VSM_MipBias);
+        return ShadowVSM2D(SpotShadowMapTexture, SamplerLinearClamp, uvAtlas, currentDepth, VSM_MipBias, spotInfo.Sharpen);
     }
 
     // Default: binary comparison using regular sampler
@@ -753,9 +704,9 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos, float3 w
 // Compute point light shadow factor from cube array (no PCF/VSM, no bias)
 float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, float3 worldPos, float3 worldNormal)
 {
-    // Map global point light index to cube array index; 0xFFFFFFFF means not shadowed
-    uint cubeIdx = PointShadowCubeIndices[pointIndex];
-    if (cubeIdx == 0xFFFFFFFFu)
+    // Read tier mapping; 0xFFFFFFFF tier means not shadowed
+    FPointShadowTierMapping mapping = PointShadowTierMappings[pointIndex];
+    if (mapping.Tier == 0xFFFFFFFFu)
         return 1.0f;
 
     float3 V = worldPos - info.Position;
@@ -796,6 +747,10 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float D = -zn * zf / (zf - zn);
     float currentDepth = C + D / z_eye;
 
+    // Tier-local cube index and layer index
+    uint cubeIdx = mapping.TierLocalIndex;
+    uint layer = cubeIdx * 6 + (uint)faceIndex;
+
     // slope-scaled bias for point lights as well
     float3 Lp = SafeNormalize3(info.Position - worldPos);
     float bias = info.Bias + info.SlopeBias * (1.0f - abs(dot(worldNormal, Lp)));
@@ -803,20 +758,35 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     // VSM path over moments 2D array
     if (bUseVSM != 0)
     {
-        uint layer = cubeIdx * 6 + (uint)faceIndex;
         static const float VSM_MipBias = 0.0f;
-        return ShadowVSM2DArray(PointShadowMoments2DArray, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias);
+        if (mapping.Tier == 0) // Low Tier
+            return ShadowVSM2DArray(PointShadowLowTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias, info.Sharpen);
+        else if (mapping.Tier == 1) // Mid Tier
+            return ShadowVSM2DArray(PointShadowMidTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias, info.Sharpen);
+        else // High Tier
+            return ShadowVSM2DArray(PointShadowHighTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias, info.Sharpen);
     }
 
     // PCF path over 2D array SRV (uses hardware comparison sampler)
     if (bUsePCF != 0)
     {
-        uint layer = cubeIdx * 6 + (uint)faceIndex;
-        return ShadowPCF2DArray(PointShadow2DArray, SamplerPCF, float3(uv, layer), currentDepth - bias);
+        if (mapping.Tier == 0) // Low Tier
+            return ShadowPCF2DArray(PointShadowLowTier2DArray, SamplerPCF, float3(uv, layer), currentDepth - bias);
+        else if (mapping.Tier == 1) // Mid Tier
+            return ShadowPCF2DArray(PointShadowMidTier2DArray, SamplerPCF, float3(uv, layer), currentDepth - bias);
+        else // High Tier
+            return ShadowPCF2DArray(PointShadowHighTier2DArray, SamplerPCF, float3(uv, layer), currentDepth - bias);
     }
 
     // Default: binary compare from cube SRV
-    float sd = PointShadowCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+    float sd;
+    if (mapping.Tier == 0) // Low Tier
+        sd = PointShadowLowTierCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+    else if (mapping.Tier == 1) // Mid Tier
+        sd = PointShadowMidTierCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+    else // High Tier
+        sd = PointShadowHighTierCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+
     return (currentDepth - bias <= sd) ? 1.0f : 0.0f;
 }
 

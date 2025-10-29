@@ -66,7 +66,7 @@ void USpotLightComponent::RenderLightDirectionGizmo(UCamera* InCamera)
 FSpotLightInfo USpotLightComponent::GetSpotLightInfo() const
 {
     return FSpotLightInfo{ FVector4(LightColor, 1), GetWorldLocation(), Intensity, AttenuationRadius, DistanceFalloffExponent,
-    InnerConeAngleRad, OuterConeAngleRad, AngleFalloffExponent, GetForwardVector(), ResolutionScale, Bias, SlopeBias, Sharpen };
+    InnerConeAngleRad, OuterConeAngleRad, AngleFalloffExponent, GetForwardVector(), ShadowResolutionScale, ShadowBias, ShadowSlopeBias, ShadowSharpen };
 }
 
 void USpotLightComponent::EnsureVisualizationBillboard()

@@ -13,11 +13,34 @@ IMPLEMENT_ABSTRACT_CLASS(ULightComponent, ULightComponentBase)
 void ULightComponent::Serialize(const bool bInIsLoading, JSON& InOutHandle)
 {
     Super::Serialize(bInIsLoading, InOutHandle);
+
+    if (bInIsLoading)
+    {
+        // Load shadow properties
+        FJsonSerializer::ReadFloat(InOutHandle, "ShadowResolutionScale", ShadowResolutionScale, 1.0f);
+        FJsonSerializer::ReadFloat(InOutHandle, "ShadowBias", ShadowBias, 0.001f);
+        FJsonSerializer::ReadFloat(InOutHandle, "ShadowSlopeBias", ShadowSlopeBias, 1.0f);
+        FJsonSerializer::ReadFloat(InOutHandle, "ShadowSharpen", ShadowSharpen, 0.0f);
+    }
+    else
+    {
+        // Save shadow properties
+        InOutHandle["ShadowResolutionScale"] = ShadowResolutionScale;
+        InOutHandle["ShadowBias"] = ShadowBias;
+        InOutHandle["ShadowSlopeBias"] = ShadowSlopeBias;
+        InOutHandle["ShadowSharpen"] = ShadowSharpen;
+    }
 }
 
 UObject* ULightComponent::Duplicate()
 {
 	ULightComponent* LightComponent = Cast<ULightComponent>(Super::Duplicate());
+
+	// Copy shadow properties
+	LightComponent->ShadowResolutionScale = ShadowResolutionScale;
+	LightComponent->ShadowBias = ShadowBias;
+	LightComponent->ShadowSlopeBias = ShadowSlopeBias;
+	LightComponent->ShadowSharpen = ShadowSharpen;
 
 	return LightComponent;
 }

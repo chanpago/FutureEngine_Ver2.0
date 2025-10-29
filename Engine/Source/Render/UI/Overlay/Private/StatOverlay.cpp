@@ -4,6 +4,14 @@
 #include "Manager/Time/Public/TimeManager.h"
 #include "Global/Memory.h"
 #include "Render/Renderer/Public/Renderer.h"
+#include "Level/Public/World.h"
+#include "Level/Public/Level.h"
+#include "Component/Public/LightComponent.h"
+#include "Component/Public/DirectionalLightComponent.h"
+#include "Component/Public/PointLightComponent.h"
+#include "Component/Public/SpotLightComponent.h"
+#include "Editor/Public/EditorEngine.h"
+#include "Component/Public/LightComponentBase.h"
 
 IMPLEMENT_SINGLETON_CLASS(UStatOverlay, UObject)
 
@@ -87,6 +95,7 @@ void UStatOverlay::Render()
     if (IsStatEnabled(EStatType::Picking)) RenderPicking(D2DCtx);
     if (IsStatEnabled(EStatType::Time))    RenderTimeInfo(D2DCtx);
     if (IsStatEnabled(EStatType::Decal))   RenderDecalInfo(D2DCtx);
+	if (IsStatEnabled(EStatType::Shadow))  RenderShadowInfo(D2DCtx);
 
     D2DCtx->EndDraw();
     D2DCtx->SetTarget(nullptr);
@@ -206,6 +215,100 @@ void UStatOverlay::RenderTimeInfo(ID2D1DeviceContext* D2DCtx)
         RenderText(D2DCtx, text, OverlayX, CurrentY, r, g, b);
         CurrentY += LineHeight;
     }
+}
+
+void UStatOverlay::RenderShadowInfo(ID2D1DeviceContext* D2DCtx)
+{
+	if (!GWorld)
+	{
+		return;
+	}
+
+	ULevel* Level = GWorld->GetLevel();
+	if (!Level)
+	{
+		return;
+	}
+
+	const auto& Lights = Level->GetLightComponents();
+
+	uint32 DirectionalLightCount = 0;
+	uint32 PointLightCount = 0;
+	uint32 SpotLightCount = 0;
+	uint32 ShadowCastingLights = 0;
+
+	for (const auto& Light : Lights)
+	{
+		if (dynamic_cast<UDirectionalLightComponent*>(Light))
+		{
+			DirectionalLightCount++;
+		}
+		else if (dynamic_cast<UPointLightComponent*>(Light))
+		{
+			PointLightCount++;
+		}
+		else if (dynamic_cast<USpotLightComponent*>(Light))
+		{
+			SpotLightCount++;
+		}
+
+		if (Light->GetCastShadows())
+		{
+			ShadowCastingLights++;
+		}
+	}
+
+    float DirMemory = 0.0f, CSMMemory = 0.0f, PointMemory = 0.0f, SpotMemory = 0.0f;
+    URenderer::GetInstance().GetDeviceResources()->GetShadowMapMemoryUsage(DirMemory, CSMMemory, PointMemory, SpotMemory);
+    float TotalMemory = DirMemory + CSMMemory + PointMemory + SpotMemory;
+
+	char Buf[256];
+    
+	float OffsetY = 0.0f;
+    if (IsStatEnabled(EStatType::FPS))    OffsetY += 20.0f;
+    if (IsStatEnabled(EStatType::Memory)) OffsetY += 20.0f;
+    if (IsStatEnabled(EStatType::Picking)) OffsetY += 20.0f;
+    if (IsStatEnabled(EStatType::Decal))  OffsetY += 40.0f;
+	if (IsStatEnabled(EStatType::Time))
+	{
+		const TArray<FString> ProfileKeys = FScopeCycleCounter::GetTimeProfileKeys();
+		OffsetY += (ProfileKeys.size() * 20.0f);
+	}
+
+    sprintf_s(Buf, sizeof(Buf), "Shadow Map Memory: %.2f MB", TotalMemory);
+    FString text = Buf;
+	RenderText(D2DCtx, text, OverlayX, OverlayY + OffsetY, 0.8f, 0.8f, 0.8f);
+	OffsetY += 20.0f;
+
+    sprintf_s(Buf, sizeof(Buf), "  - Directional: %.2f MB", DirMemory);
+    text = Buf;
+    RenderText(D2DCtx, text, OverlayX, OverlayY + OffsetY, 0.8f, 0.8f, 0.8f);
+    OffsetY += 20.0f;
+
+    sprintf_s(Buf, sizeof(Buf), "  - CSM: %.2f MB", CSMMemory);
+    text = Buf;
+    RenderText(D2DCtx, text, OverlayX, OverlayY + OffsetY, 0.8f, 0.8f, 0.8f);
+    OffsetY += 20.0f;
+
+    sprintf_s(Buf, sizeof(Buf), "  - Point: %.2f MB", PointMemory);
+    text = Buf;
+    RenderText(D2DCtx, text, OverlayX, OverlayY + OffsetY, 0.8f, 0.8f, 0.8f);
+    OffsetY += 20.0f;
+
+    sprintf_s(Buf, sizeof(Buf), "  - Spot: %.2f MB", SpotMemory);
+    text = Buf;
+    RenderText(D2DCtx, text, OverlayX, OverlayY + OffsetY, 0.8f, 0.8f, 0.8f);
+    OffsetY += 20.0f;
+
+	sprintf_s(Buf, sizeof(Buf), "Lights: %u Directional, %u Point, %u Spot",
+		DirectionalLightCount, PointLightCount, SpotLightCount);
+	text = Buf;
+	RenderText(D2DCtx, text, OverlayX, OverlayY + OffsetY, 0.8f, 0.8f, 0.8f);
+	OffsetY += 20.0f;
+
+	sprintf_s(Buf, sizeof(Buf), "Shadow Casting Lights: %u", ShadowCastingLights);
+	text = Buf;
+	RenderText(D2DCtx, text, OverlayX, OverlayY + OffsetY, 0.8f, 0.8f, 0.8f);
 }
 
 void UStatOverlay::RenderText(ID2D1DeviceContext* D2DCtx, const FString& Text, float x, float y, float r, float g, float b)

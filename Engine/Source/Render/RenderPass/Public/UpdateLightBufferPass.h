@@ -8,6 +8,51 @@ class UPointLightComponent;
 class UStaticMeshComponent;
 
 /**
+ * @brief Point Light Shadow Tier Mapping Structure
+ * Maps global point light index to tier and tier-local cube index
+ */
+struct FPointShadowTierMapping
+{
+    uint32 Tier;           // 0=Low(512), 1=Mid(1024), 2=High(2048), 0xFFFFFFFF=no shadow
+    uint32 TierLocalIndex; // 0-7 within the tier's cube array
+};
+
+/**
+ * @brief Spot Light Shadow Atlas Layout (3-Tier System)
+ * Multi-resolution atlas supporting 24 total spot lights
+ */
+struct FSpotShadowAtlasLayout
+{
+    // High Tier: 2048x2048, 8 lights max, Scale 1.51~4.0
+    static constexpr UINT HighTileSize = 2048;
+    static constexpr UINT HighTilesX = 4;
+    static constexpr UINT HighTilesY = 2;
+    static constexpr UINT HighOffsetY = 0;
+    static constexpr UINT MaxHighLights = 8;
+
+    // Mid Tier: 1024x1024, 8 lights max, Scale 0.76~1.5
+    static constexpr UINT MidTileSize = 1024;
+    static constexpr UINT MidTilesX = 8;
+    static constexpr UINT MidTilesY = 1;
+    static constexpr UINT MidOffsetY = 4096;
+    static constexpr UINT MaxMidLights = 8;
+
+    // Low Tier: 512x512, 8 lights max, Scale 0.25~0.75
+    static constexpr UINT LowTileSize = 512;
+    static constexpr UINT LowTilesX = 8;
+    static constexpr UINT LowTilesY = 1;
+    static constexpr UINT LowOffsetY = 5120;
+    static constexpr UINT MaxLowLights = 8;
+
+    static constexpr UINT AtlasWidth = 8192;
+    static constexpr UINT AtlasHeight = 8192;
+
+    // Tier classification thresholds (same as Point Light system)
+    static constexpr float LowThreshold = 0.75f;
+    static constexpr float MidThreshold = 1.5f;
+};
+
+/**
  * @brief Shadow Map을 베이킹하는 RenderPass
  * Light의 관점에서 장면을 렌더링하여 Shadow Map 텍스처를 생성합니다.
  */
@@ -39,7 +84,7 @@ public:
 	FVector4 GetLightOrthoLTRB() const {return LightOrthoLTRB;}
 
 	// Calculate Cascade split distance
-	void CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera);
+    void CalculateCascadeSplits(FRenderingContext& Context, float* OutSplits, const UCamera* InCamera);
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
 	// LiSPSM for DirectionalLight: Light-Space Perspective Shadow Mapping (PUBLIC for StaticMeshPass)
@@ -52,8 +97,8 @@ public:
 	    TArray<FMatrix> LightViews;
 	    TArray<FMatrix> LightProjs;
 	    FVector4        LightOrthoParams; // For EShadowProjectionType::None
-		FVector4		CascadeSplits;	  // For EShadowProjectionType::CSM
-		FMatrix			LisPSM;	
+		float CascadeSplits[MAX_CASCADES];    // For EShadowProjectionType::CSM
+FMatrix			LisPSM;	
 	};
 
 private:
