@@ -66,12 +66,28 @@ public:
 	ID3D11ShaderResourceView* GetDepthSRV() const { return DepthBufferSRV; }
 	ID3D11ShaderResourceView* GetDepthStencilSRV() const { return DepthStencilSRV; }
 
-	// Shadow Map Getters
-	ID3D11DepthStencilView* GetDirectionalShadowMapDSV() const { return DirectionalShadowMapDSV; }
-	ID3D11ShaderResourceView* GetDirectionalShadowMapSRV() const { return DirectionalShadowMapSRV; }
-	ID3D11RenderTargetView* GetDirectionalShadowMapColorRTV() const { return DirectionalShadowMapColorRTV; }
-	ID3D11ShaderResourceView* GetDirectionalShadowMapColorSRV() const {return DirectionalShadowMapColorSRV; }
-	ID3D11Texture2D* GetDirectionalShadowMapColorTexture() const {return DirectionalShadowMapColorTexture; }
+	// Shadow Map Getters (returns resources from currently active tier)
+	ID3D11DepthStencilView* GetDirectionalShadowMapDSV() const { return DirectionalShadowMapDSVs[DirectionalShadowActiveTier]; }
+	ID3D11ShaderResourceView* GetDirectionalShadowMapSRV() const { return DirectionalShadowMapSRVs[DirectionalShadowActiveTier]; }
+	ID3D11RenderTargetView* GetDirectionalShadowMapColorRTV() const { return DirectionalShadowMapColorRTVs[DirectionalShadowActiveTier]; }
+	ID3D11ShaderResourceView* GetDirectionalShadowMapColorSRV() const { return DirectionalShadowMapColorSRVs[DirectionalShadowActiveTier]; }
+	ID3D11Texture2D* GetDirectionalShadowMapColorTexture() const { return DirectionalShadowMapColorTextures[DirectionalShadowActiveTier]; }
+
+	// Set active tier based on shadow resolution scale (0=Low:1024, 1=Mid:2048, 2=High:4096)
+	void SetDirectionalShadowTier(float ShadowResolutionScale)
+	{
+		if (ShadowResolutionScale <= 0.75f)
+			DirectionalShadowActiveTier = 0; // Low
+		else if (ShadowResolutionScale <= 1.5f)
+			DirectionalShadowActiveTier = 1; // Mid
+		else
+			DirectionalShadowActiveTier = 2; // High
+	}
+	uint32 GetDirectionalShadowResolution() const
+	{
+		static const uint32 TierResolutions[3] = { 1024, 2048, 4096 };
+		return TierResolutions[DirectionalShadowActiveTier];
+	}
 
     // Spot Light Shadow Map Getters
     ID3D11DepthStencilView* GetSpotShadowMapDSV() const { return SpotShadowMapDSV; }
@@ -156,13 +172,15 @@ private:
 	ID3D11RenderTargetView* SceneColorTextureRTV = nullptr;
 	ID3D11ShaderResourceView* SceneColorTextureSRV = nullptr;
 
-	// Directional Light Shadow Map
-	ID3D11Texture2D* DirectionalShadowMapTexture = nullptr;
-	ID3D11DepthStencilView* DirectionalShadowMapDSV = nullptr;
-	ID3D11ShaderResourceView* DirectionalShadowMapSRV = nullptr;
-	ID3D11RenderTargetView* DirectionalShadowMapColorRTV = nullptr;
-	ID3D11ShaderResourceView* DirectionalShadowMapColorSRV = nullptr;
-	ID3D11Texture2D* DirectionalShadowMapColorTexture = nullptr;
+	// Directional Light Shadow Map (3-Tier System)
+	// Tier 0: Low (1024x1024), Tier 1: Mid (2048x2048), Tier 2: High (4096x4096)
+	ID3D11Texture2D* DirectionalShadowMapTextures[3] = { nullptr, nullptr, nullptr };
+	ID3D11DepthStencilView* DirectionalShadowMapDSVs[3] = { nullptr, nullptr, nullptr };
+	ID3D11ShaderResourceView* DirectionalShadowMapSRVs[3] = { nullptr, nullptr, nullptr };
+	ID3D11RenderTargetView* DirectionalShadowMapColorRTVs[3] = { nullptr, nullptr, nullptr };
+	ID3D11ShaderResourceView* DirectionalShadowMapColorSRVs[3] = { nullptr, nullptr, nullptr };
+	ID3D11Texture2D* DirectionalShadowMapColorTextures[3] = { nullptr, nullptr, nullptr };
+	uint32 DirectionalShadowActiveTier = 1; // Default: Mid tier (2048x2048)
 
     // Spot Light Shadow Map
     ID3D11Texture2D* SpotShadowMapTexture = nullptr;

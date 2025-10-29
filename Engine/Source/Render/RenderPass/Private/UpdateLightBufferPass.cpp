@@ -1405,6 +1405,16 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
     UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
     if (!Light) return;
 
+    // Set shadow map tier based on light's resolution scale (3-Tier System)
+    float shadowScale = Light->GetShadowResolutionScale();
+    auto* DeviceResources = URenderer::GetInstance().GetDeviceResources();
+    DeviceResources->SetDirectionalShadowTier(shadowScale);
+
+    // Update viewport to match tier resolution
+    uint32 resolution = DeviceResources->GetDirectionalShadowResolution();
+    DirectionalShadowViewport.Width = static_cast<float>(resolution);
+    DirectionalShadowViewport.Height = static_cast<float>(resolution);
+
     switch (ProjType)
     {
     case EShadowProjectionType::Default:

@@ -573,113 +573,122 @@ void UDeviceResources::ReleaseFactories()
  */
 void UDeviceResources::CreateShadowMapResources()
 {
-	// TODO: 임시 비활성화 - 문제 분리용
-	
 	if (!Device)
 	{
 		UE_LOG_ERROR("CreateShadowMapResources: Device is null!");
 		return;
 	}
 
-	// Shadow Map 크기 (2048x2048 고품질)
-	const UINT ShadowMapSize = 2048;
+	// Create 3-Tier Directional Shadow Maps
+	// Low: 1024x1024, Mid: 2048x2048, High: 4096x4096
+	const UINT TierResolutions[3] = { 1024, 2048, 4096 };
+	const char* TierNames[3] = { "Low", "Mid", "High" };
 
-	// Depth Texture 생성
-	D3D11_TEXTURE2D_DESC TexDesc = {};
-	TexDesc.Width = ShadowMapSize;
-	TexDesc.Height = ShadowMapSize;
-	TexDesc.MipLevels = 1;
-	TexDesc.ArraySize = 1;
-	TexDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;  // Depth 24bit + Stencil 8bit
-	TexDesc.SampleDesc.Count = 1;
-	TexDesc.SampleDesc.Quality = 0;
-	TexDesc.Usage = D3D11_USAGE_DEFAULT;
-	TexDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-	TexDesc.CPUAccessFlags = 0;
-	TexDesc.MiscFlags = 0;
-
-	HRESULT hr = Device->CreateTexture2D(&TexDesc, nullptr, &DirectionalShadowMapTexture);
-	if (FAILED(hr))
+	for (int tier = 0; tier < 3; ++tier)
 	{
-		UE_LOG_ERROR("Failed to create Directional Shadow Map Texture");
-		return;
-	}
+		const UINT ShadowMapSize = TierResolutions[tier];
 
-	// Depth Stencil View 생성
-	D3D11_DEPTH_STENCIL_VIEW_DESC DSVDesc = {};
-	DSVDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-	DSVDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-	DSVDesc.Texture2D.MipSlice = 0;
+		// Depth Texture
+		D3D11_TEXTURE2D_DESC TexDesc = {};
+		TexDesc.Width = ShadowMapSize;
+		TexDesc.Height = ShadowMapSize;
+		TexDesc.MipLevels = 1;
+		TexDesc.ArraySize = 1;
+		TexDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+		TexDesc.SampleDesc.Count = 1;
+		TexDesc.SampleDesc.Quality = 0;
+		TexDesc.Usage = D3D11_USAGE_DEFAULT;
+		TexDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+		TexDesc.CPUAccessFlags = 0;
+		TexDesc.MiscFlags = 0;
 
-	hr = Device->CreateDepthStencilView(DirectionalShadowMapTexture, &DSVDesc, &DirectionalShadowMapDSV);
-	if (FAILED(hr))
-	{
-		UE_LOG_ERROR("Failed to create Directional Shadow Map DSV");
-		ReleaseShadowMapResources();
-		return;
-	}
+		HRESULT hr = Device->CreateTexture2D(&TexDesc, nullptr, &DirectionalShadowMapTextures[tier]);
+		if (FAILED(hr))
+		{
+			UE_LOG_ERROR("Failed to create Directional Shadow Map Texture (Tier %s)", TierNames[tier]);
+			ReleaseShadowMapResources();
+			return;
+		}
 
-	// Shader Resource View 생성 (Depth를 텔스처로 사용)
-	D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
-	SRVDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-	SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	SRVDesc.Texture2D.MostDetailedMip = 0;
-	SRVDesc.Texture2D.MipLevels = 1;
+		// Depth Stencil View
+		D3D11_DEPTH_STENCIL_VIEW_DESC DSVDesc = {};
+		DSVDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		DSVDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		DSVDesc.Texture2D.MipSlice = 0;
 
-	hr = Device->CreateShaderResourceView(DirectionalShadowMapTexture, &SRVDesc, &DirectionalShadowMapSRV);
-	if (FAILED(hr))
-	{
-		UE_LOG_ERROR("Failed to create Directional Shadow Map SRV");
-		ReleaseShadowMapResources();
-		return;
-	}
+		hr = Device->CreateDepthStencilView(DirectionalShadowMapTextures[tier], &DSVDesc, &DirectionalShadowMapDSVs[tier]);
+		if (FAILED(hr))
+		{
+			UE_LOG_ERROR("Failed to create Directional Shadow Map DSV (Tier %s)", TierNames[tier]);
+			ReleaseShadowMapResources();
+			return;
+		}
 
-	UE_LOG("Directional Shadow Map Resources Created Successfully (Size: %dx%d)", ShadowMapSize, ShadowMapSize);
+		// Shader Resource View (Depth)
+		D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
+		SRVDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		SRVDesc.Texture2D.MostDetailedMip = 0;
+		SRVDesc.Texture2D.MipLevels = 1;
 
-	D3D11_TEXTURE2D_DESC ColorDesc = {};
-	ColorDesc.Width = ShadowMapSize;
-	ColorDesc.Height = ShadowMapSize;
-	ColorDesc.MipLevels = 0; // 전체 밉맵 체인을 생성하도록 함.
-	ColorDesc.ArraySize = 1;
-	ColorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
-	ColorDesc.SampleDesc.Count = 1;
-	ColorDesc.Usage = D3D11_USAGE_DEFAULT;
-	ColorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-	ColorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS; // 밉맵 자동 생성을 허용하는 플래그
+		hr = Device->CreateShaderResourceView(DirectionalShadowMapTextures[tier], &SRVDesc, &DirectionalShadowMapSRVs[tier]);
+		if (FAILED(hr))
+		{
+			UE_LOG_ERROR("Failed to create Directional Shadow Map SRV (Tier %s)", TierNames[tier]);
+			ReleaseShadowMapResources();
+			return;
+		}
 
-	hr = Device->CreateTexture2D(&ColorDesc, nullptr, &DirectionalShadowMapColorTexture);
-	if (FAILED(hr))
-	{
-		UE_LOG_ERROR("Failed to create Directional Shadow Map Color Texture");
-		ReleaseShadowMapResources();
-		return;
-	}
+		// Color Texture (VSM)
+		D3D11_TEXTURE2D_DESC ColorDesc = {};
+		ColorDesc.Width = ShadowMapSize;
+		ColorDesc.Height = ShadowMapSize;
+		ColorDesc.MipLevels = 0;
+		ColorDesc.ArraySize = 1;
+		ColorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
+		ColorDesc.SampleDesc.Count = 1;
+		ColorDesc.Usage = D3D11_USAGE_DEFAULT;
+		ColorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		ColorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 
-	D3D11_RENDER_TARGET_VIEW_DESC RTVDesc = {};
-	RTVDesc.Format = ColorDesc.Format;
-	RTVDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-	RTVDesc.Texture2D.MipSlice = 0;
+		hr = Device->CreateTexture2D(&ColorDesc, nullptr, &DirectionalShadowMapColorTextures[tier]);
+		if (FAILED(hr))
+		{
+			UE_LOG_ERROR("Failed to create Directional Shadow Map Color Texture (Tier %s)", TierNames[tier]);
+			ReleaseShadowMapResources();
+			return;
+		}
 
-	hr = Device->CreateRenderTargetView(DirectionalShadowMapColorTexture, &RTVDesc, &DirectionalShadowMapColorRTV);
-	if (FAILED(hr))
-	{
-		UE_LOG_ERROR("Failed to create Directional Shadow Map Color RTV");
-		ReleaseShadowMapResources();
-		return;
-	}
+		// Render Target View (VSM)
+		D3D11_RENDER_TARGET_VIEW_DESC RTVDesc = {};
+		RTVDesc.Format = ColorDesc.Format;
+		RTVDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		RTVDesc.Texture2D.MipSlice = 0;
 
-	D3D11_SHADER_RESOURCE_VIEW_DESC ColorSRVDesc = {};
-	ColorSRVDesc.Format = ColorDesc.Format;
-	ColorSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	ColorSRVDesc.Texture2D.MostDetailedMip = 0;
-	ColorSRVDesc.Texture2D.MipLevels = 1;
+		hr = Device->CreateRenderTargetView(DirectionalShadowMapColorTextures[tier], &RTVDesc, &DirectionalShadowMapColorRTVs[tier]);
+		if (FAILED(hr))
+		{
+			UE_LOG_ERROR("Failed to create Directional Shadow Map Color RTV (Tier %s)", TierNames[tier]);
+			ReleaseShadowMapResources();
+			return;
+		}
 
-	hr = Device->CreateShaderResourceView(DirectionalShadowMapColorTexture, &ColorSRVDesc, &DirectionalShadowMapColorSRV);
-	if (FAILED(hr))
-	{
-		UE_LOG_ERROR("Failed to create Directional Shadow Map Color SRV");
-		ReleaseShadowMapResources();
-		return;
+		// Shader Resource View (VSM Color)
+		D3D11_SHADER_RESOURCE_VIEW_DESC ColorSRVDesc = {};
+		ColorSRVDesc.Format = ColorDesc.Format;
+		ColorSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		ColorSRVDesc.Texture2D.MostDetailedMip = 0;
+		ColorSRVDesc.Texture2D.MipLevels = 1;
+
+		hr = Device->CreateShaderResourceView(DirectionalShadowMapColorTextures[tier], &ColorSRVDesc, &DirectionalShadowMapColorSRVs[tier]);
+		if (FAILED(hr))
+		{
+			UE_LOG_ERROR("Failed to create Directional Shadow Map Color SRV (Tier %s)", TierNames[tier]);
+			ReleaseShadowMapResources();
+			return;
+		}
+
+		UE_LOG("Directional Shadow Map %s Tier Created: %dx%d", TierNames[tier], ShadowMapSize, ShadowMapSize);
 	}
 }
 
@@ -1041,10 +1050,13 @@ void UDeviceResources::ReleasePointShadowCubeResources()
  */
 void UDeviceResources::ReleaseShadowMapResources()
 {
-    SafeRelease(DirectionalShadowMapColorSRV);
-    SafeRelease(DirectionalShadowMapColorRTV);
-    SafeRelease(DirectionalShadowMapColorTexture);
-    SafeRelease(DirectionalShadowMapSRV);
-    SafeRelease(DirectionalShadowMapDSV);
-    SafeRelease(DirectionalShadowMapTexture);
+    for (int tier = 0; tier < 3; ++tier)
+    {
+        SafeRelease(DirectionalShadowMapColorSRVs[tier]);
+        SafeRelease(DirectionalShadowMapColorRTVs[tier]);
+        SafeRelease(DirectionalShadowMapColorTextures[tier]);
+        SafeRelease(DirectionalShadowMapSRVs[tier]);
+        SafeRelease(DirectionalShadowMapDSVs[tier]);
+        SafeRelease(DirectionalShadowMapTextures[tier]);
+    }
 }
