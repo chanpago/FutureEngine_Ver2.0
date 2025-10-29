@@ -133,6 +133,11 @@ struct FDirectionalLightInfo
 	FVector4 Color;
 	FVector Direction;
 	float Intensity;
+
+	float ResolutionScale;
+	float Bias;
+	float SlopeBias;
+	float Sharpen;
 };
 
 //StructuredBuffer padding 없어도됨
@@ -143,6 +148,12 @@ struct FPointLightInfo
 	float Intensity;
 	float Range;
 	float DistanceFalloffExponent;
+
+	float ResolutionScale;
+	float Bias;
+	float SlopeBias;
+	float Sharpen;
+	
 	FVector2 padding;
 };
 
@@ -161,6 +172,11 @@ struct FSpotLightInfo
 	float OuterConeAngle;
 	float AngleFalloffExponent;
 	FVector Direction;
+
+	float ResolutionScale;
+	float Bias;
+	float SlopeBias;
+	float Sharpen;
 };
 
 struct FGlobalLightConstant
@@ -194,33 +210,6 @@ struct FShadowMapConstants
 	uint32  bUsePCF;
 	uint32  bUseCSM;	// 0 = no CSM, 1 = enable CSM
 	float   Padding[2];
-};
-
-// Spot Light dedicated shadow constants (single spot caster)
-struct FSpotShadowConstants
-{
-    FMatrix LightView;      // spot view
-    FMatrix LightProj;      // spot projection (perspective)
-    FVector SpotPosition;   // world pos
-    float   SpotRange;      // max range
-    FVector SpotDirection;  // world dir (normalized)
-    float   OuterCone;      // radians
-    float   InnerCone;      // radians
-    FVector2 ShadowMapSize; // (Sx, Sy)
-    float   ShadowBias;     // depth bias
-    uint32  bUseVSM;        // 0/1
-    uint32  bUsePCF;        // 0/1
-    float   Padding;        // align to 16 bytes
-
-    // Spot shadow atlas (for multiple spotlights)
-    // Entire atlas texture size (pixels)
-    FVector2 SpotAtlasTextureSize; // (AtlasWidth, AtlasHeight)
-    // Per-tile size (pixels)
-    FVector2 SpotTileSize;         // (TileWidth, TileHeight)
-    // Atlas grid layout
-    uint32  SpotAtlasCols;         // number of columns in atlas
-    uint32  SpotAtlasRows;         // number of rows in atlas
-    FVector2 SpotAtlasPadding;     // unused, keep 16-byte alignment
 };
 
 // Per-spot shadow atlas entry uploaded as a structured buffer

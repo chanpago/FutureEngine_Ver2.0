@@ -170,6 +170,37 @@ void USpotLightComponentWidget::RenderWidget()
         ImGui::SetTooltip("스포트라이트 원뿔의 안쪽 가장자리 각도입니다.\n이 각도 안쪽은 최대 밝기입니다.");
     }
     
+    // Shadow parameters
+    float depthBias = SpotLightComponent->GetBias();
+    if (ImGui::DragFloat("Shadow Bias", &depthBias, 0.0001f, 0.0f, 0.02f, "%.5f"))
+    {
+        SpotLightComponent->SetBias(depthBias);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("그림자 깊이 바이어스(아크네 방지)");
+    }
+
+    float slopeBias = SpotLightComponent->GetSlopeBias();
+    if (ImGui::DragFloat("Slope Bias", &slopeBias, 0.0005f, 0.0f, 0.2f, "%.5f"))
+    {
+        SpotLightComponent->SetSlopeBias(slopeBias);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("경사(법선) 기반 추가 바이어스");
+    }
+
+    float sharpen = SpotLightComponent->GetSharpen();
+    if (ImGui::DragFloat("Sharpen", &sharpen, 0.05f, 0.0f, 3.0f, "%.2f"))
+    {
+        SpotLightComponent->SetSharpen(sharpen);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("그림자 경계 선명도");
+    }
+
     ImGui::PopStyleColor(3);
     
     // Cast Shadows (PSM) Checkbox

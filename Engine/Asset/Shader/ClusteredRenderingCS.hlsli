@@ -7,7 +7,12 @@ struct FPointLightInfo
     float Intensity;
     float Range;
     float DistanceFalloffExponent;
-    float2 padding;
+    // Keep layout in sync with CoreTypes.h and UberLit.hlsl
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
+    float2 Padding;
 };
 
 //StructuredBuffer padding 없어도됨
@@ -25,6 +30,12 @@ struct FSpotLightInfo
     float OuterConeAngle;
     float AngleFalloffExponent;
     float3 Direction;
+
+    // Shadow/control params to match CPU/GPU lighting structs
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
 };
 struct FGizmoVertex
 {
