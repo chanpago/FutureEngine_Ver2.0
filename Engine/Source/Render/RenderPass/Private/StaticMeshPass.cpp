@@ -42,6 +42,35 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	Pipeline->SetConstantBuffer(1, EShaderType::VS, ConstantBufferCamera);
 	Pipeline->SetConstantBuffer(1, EShaderType::PS, ConstantBufferCamera);
 
+	// Make shadow filtering flags available even without directional lights
+	if (Context.ShowFlags & EEngineShowFlags::SF_Shadow)
+	{
+		const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
+		const EShadowFilterType FilterType = Context.ShadowFilterType;
+		FShadowMapConstants ShadowFlags = {};
+		ShadowFlags.bUsePCF = (FilterType == EShadowFilterType::PCF) ? 1.0f : 0.0f;
+		ShadowFlags.bUseVSM = (FilterType == EShadowFilterType::VSM) ? 1.0f : 0.0f;
+		ShadowFlags.bUsePSM = (ProjectionType == EShadowProjectionType::PSM) ? 1.0f : 0.0f;
+		ShadowFlags.bUseCSM = (ProjectionType == EShadowProjectionType::CSM) ? 1.0f : 0.0f;
+		ShadowFlags.ShadowParams.X = (FilterType == EShadowFilterType::VSM) ? 0.0015f : 0.005f;
+		FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowFlags);
+		Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
+		// Base samplers for filters (directional/spot sections may rebind)
+		Pipeline->SetSamplerState(0, EShaderType::PS, Renderer.GetDefaultSampler());
+		if (FilterType == EShadowFilterType::None)
+		{
+			Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+		}
+		else if (FilterType == EShadowFilterType::PCF)
+		{
+			Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+		}
+		else if (FilterType == EShadowFilterType::VSM)
+		{
+			Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
+		}
+	}
+
 	// +-+-+ BIND SHADOW MAP CONSTANT BUFFER AND SRV +-+-+
 	FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
 	UDirectionalLightComponent* Light = Context.DirectionalLights.empty() ? nullptr : Context.DirectionalLights[0];
@@ -149,8 +178,12 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
 			Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
 		}
+	}
 
-		// Bind spotlight shadow (single caster) alongside directional
+	// Bind spotlight shadow resources independently of directional light presence
+	if (Context.ShowFlags & EEngineShowFlags::SF_Shadow)
+	{
+		const EShadowFilterType FilterType = Context.ShadowFilterType;
 		if (!Context.SpotLights.empty())
 		{
 			USpotLightComponent* SpotCaster = nullptr;
@@ -160,36 +193,36 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				// {
 				SpotCaster = SL;
 				// }
-				if (SpotCaster)
-				{
-	                ID3D11ShaderResourceView* SpotSRV = nullptr;
-	                if (FilterType == EShadowFilterType::VSM)
-	                {
-	                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapColorSRV();
-	                }
-	                else
-	                {
-	                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
-	                }
-					
-	                Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
+			}
+			if (SpotCaster)
+			{
+                ID3D11ShaderResourceView* SpotSRV = nullptr;
+                if (FilterType == EShadowFilterType::VSM)
+                {
+                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapColorSRV();
+                }
+                else
+                {
+                    SpotSRV = Renderer.GetDeviceResources()->GetSpotShadowMapSRV();
+                }
+				
+                Pipeline->SetShaderResourceView(12, EShaderType::PS, SpotSRV);
 
-					// Bind atlas entries buffer (t13)
+				// Bind atlas entries buffer (t13)
 				Pipeline->SetShaderResourceView(13, EShaderType::PS, LightBufferPass->GetSpotShadowAtlasSRV());
 
-					// Sampler (reuse same policy)
-					if (FilterType == EShadowFilterType::None)
-					{
-						Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
-					}
-					else if (FilterType == EShadowFilterType::PCF)
-					{
-						Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
-					}
-					else if (FilterType == EShadowFilterType::VSM)
-					{
-						Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
-					}
+				// Sampler (reuse same policy)
+				if (FilterType == EShadowFilterType::None)
+				{
+					Pipeline->SetSamplerState(2, EShaderType::PS, Renderer.GetShadowSampler());
+				}
+				else if (FilterType == EShadowFilterType::PCF)
+				{
+					Pipeline->SetSamplerState(10, EShaderType::PS, Renderer.GetShadowMapPCFSampler());
+				}
+				else if (FilterType == EShadowFilterType::VSM)
+				{
+					Pipeline->SetSamplerState(1, EShaderType::PS, Renderer.GetShadowMapClampSampler());
 				}
 			}
 		}
@@ -199,8 +232,6 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
             Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
             Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
         }
-
-
 	}
 
 	/**
