@@ -510,6 +510,12 @@ float SampleShadowCSM(float3 worldPos, float viewDepth)
 
 float PSM_Visibility(float3 worldPos)
 {
+    if (bUseCSM != 0)
+    {
+        float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
+        return SampleShadowCSM(worldPos, ViewDepth);
+    }
+    
     // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
     float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
     
@@ -534,40 +540,12 @@ float PSM_Visibility(float3 worldPos)
 
     // 경계 밖이면 취향에 따라 1(밝게) 또는 0(그림자) 처리. 보통 1이 안전.
     if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
-
-    // 2) 수동 PCF (3x3). 필요시 5x5로 확장 가능.
-    //const int R = 1;
-    //float sum = 0.0;
-    //[unroll] for (int dy=-R; dy<=R; ++dy)
-    //    [unroll] for (int dx=-R; dx<=R; ++dx)
-    //    {
-    //        float2 o  = float2(dx, dy) * gShadowTexel;
-    //        float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
-//
-    //        // 비교방향: normal (<) vs inverted (>)
-    //        // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
-    //        // LVP: 샘플링 시 바이어스 적용
-    //        bool lit;
-    //        if (bUsePSM == 1)
-    //        {
-    //            // PSM: 월드 공간 바이어스가 ShadowMap.hlsl에 이미 적용됨
-    //            lit = (bInvertedLight == 0) ? (z <= dz) : (z >= dz);
-    //        }
-    //        else
-    //        {
-    //            // LVP: 샘플링 시 바이어스 적용
-    //            lit = (bInvertedLight == 0)
-    //                ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
-    //                : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
-    //        }
-    //        sum += lit ? 1.0 : 0.0;
-    //    }
-/*
+    
+    /*
 pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “식별자 이름” 문제. HLSL(특히 FX 문법 인식)에서 pass는 예약어로 취급되는 경우가 있어서 변수 이름으로 쓰면 파서가 에러
 우연찮게 vs로 한번보자는 생각이들어서 봤었는데, vs는 여기에 빨간줄 뜨더라.. 갓 vs..
 이거 때문에 3시간 날렸다.. 찾기도 어려운 HLSL 조심 또 조심....
  */
-
     
     // World Position을 Light 공간으로 변환
     float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[0]);
@@ -586,12 +564,8 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
-    
-    if (bUseCSM != 0)
-    {
-        return SampleShadowCSM(worldPos, ViewDepth);
-    }
-    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
+
+    if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
         return ShadowBinary2D(ShadowMapTexture, SamplerWrap, ShadowUV, CurrentDepth - ShadowParams[0]);
