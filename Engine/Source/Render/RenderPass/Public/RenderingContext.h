@@ -22,6 +22,7 @@ struct FRenderingContext
     uint64 ShowFlags;
     D3D11_VIEWPORT Viewport;
     FVector2 RenderTargetSize;
+    float CSMLambda = 0.8f;
 
     EShadowProjectionType ShadowProjectionType = EShadowProjectionType::Default;
     EShadowFilterType ShadowFilterType = EShadowFilterType::None;

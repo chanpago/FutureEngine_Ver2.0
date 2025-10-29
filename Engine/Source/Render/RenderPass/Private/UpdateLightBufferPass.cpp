@@ -1526,7 +1526,7 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
         const UCamera* Camera = Context.CurrentCamera;
         if (!Camera) return;
 
-        CalculateCascadeSplits(OutShadowData.CascadeSplits, Camera);
+        CalculateCascadeSplits(Context, OutShadowData.CascadeSplits, Camera);
         /*CascadedShadowMapConstants.CascadeSplits = OutShadowData.CascadeSplits;
         const float* pSplits = &OutShadowData.CascadeSplits.X;*/
         memcpy(CascadedShadowMapConstants.CascadeSplits, OutShadowData.CascadeSplits, sizeof(float)* MAX_CASCADES);
@@ -1553,7 +1553,7 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
             {
                 // Set light position
                 FVector LightDir = Light->GetForwardVector().GetNormalized();
-                float ShadowDistance = 200.0f;
+                float ShadowDistance = 500.0f;
                 /*float CameraRange = Camera->GetFarZ() - Camera->GetNearZ();
                 float ShadowDistance = std::min(500.0f, CameraRange * 0.5f);*/
                 FVector LightPos = FrustumCenter - LightDir * ShadowDistance;
@@ -1742,13 +1742,13 @@ void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType P
     FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, CasterConsts);
 }
 
-void FUpdateLightBufferPass::CalculateCascadeSplits(float* OutSplits, const UCamera* InCamera)
+void FUpdateLightBufferPass::CalculateCascadeSplits(FRenderingContext& Context, float* OutSplits, const UCamera* InCamera)
 {
     const float NearClip = InCamera->GetNearZ();
     const float FarClip = InCamera->GetFarZ();
     const float ClipRange = FarClip - NearClip;
 
-    const float lambda = 0.8f;
+    const float lambda = Context.CSMLambda;
 
     for (int i = 0; i < MAX_CASCADES; i++)
     {

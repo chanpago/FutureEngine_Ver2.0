@@ -308,6 +308,13 @@ void UDirectionalLightComponentWidget::RenderWidget()
 
         ImGui::SeparatorText("Cascaded Shadow Maps");
         static int cascadePreviewIndex = 0;
+
+        float csmLambda = DirectionalLightComponent->GetCSMLambda();
+        if (ImGui::SliderFloat("CSM Lambda", &csmLambda, 0.0f, 1.0f))
+        {
+            DirectionalLightComponent->SetCSMLambda(csmLambda);
+        }
+
         int numActiveCascades = 8;
         ImGui::SliderInt("Preview Index", &cascadePreviewIndex, 0, numActiveCascades - 1);
         

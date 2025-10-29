@@ -52,10 +52,14 @@ public:
     void RenderLightDirectionGizmo(UCamera* InCamera);
     FDirectionalLightInfo GetDirectionalLightInfo() const;
 
+    float GetCSMLambda() { return CSMLambda; }
+    void SetCSMLambda(float InLambda) { CSMLambda = InLambda; }
+
 private:
     void EnsureVisualizationBillboard()override;
 
 private:
     FEditorPrimitive LightDirectionArrow;
+    float CSMLambda = 0.8f;
 };
 

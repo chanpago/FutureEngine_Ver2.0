@@ -83,7 +83,7 @@ public:
 	FVector4 GetLightOrthoLTRB() const {return LightOrthoLTRB;}
 
 	// Calculate Cascade split distance
-	void CalculateCascadeSplits(float* OutSplits, const UCamera* InCamera);
+    void CalculateCascadeSplits(FRenderingContext& Context, float* OutSplits, const UCamera* InCamera);
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
 	struct FShadowCalculationData

@@ -923,6 +923,12 @@ void URenderer::RenderLevel(FViewport* InViewport)
 		{
 			RenderingContext.AmbientLights.push_back(AmbientLightComponent);
 		}
+
+		if (!RenderingContext.DirectionalLights.empty())
+		{
+			UDirectionalLightComponent* DirLight = RenderingContext.DirectionalLights[0];
+			RenderingContext.CSMLambda = DirLight->GetCSMLambda();
+		}
 	}
 
 	// 2. Collect HeightFogComponents from all actors in the level
