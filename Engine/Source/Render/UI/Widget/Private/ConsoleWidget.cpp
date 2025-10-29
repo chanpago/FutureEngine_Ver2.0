@@ -554,36 +554,33 @@ void UConsoleWidget::HandleStatCommand(const FString& StatCommand)
 
 void UConsoleWidget::HandleShadowFilterCommand(const FString& FilterType)
 {
-	ULevel* CurrentLevel = GWorld->GetLevel();
-	uint64 ShowFlags = CurrentLevel->GetShowFlags();
+	ULevel* CurrentLevel = (GWorld ? GWorld->GetLevel() : nullptr);
 	if (!CurrentLevel)
 	{
 		AddLog(ELogType::Error, "Cannot change shadow filter: No level loaded.");
 		return;
 	}
-	ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_VSM);
-	ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_PCF);
+
 	if (FilterType == "vsm")
 	{
-		ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_VSM);
+		CurrentLevel->SetShadowFilterType(EShadowFilterType::VSM);
 		AddLog(ELogType::Success, "Shadow filter set to: VSM");
 	}
 	else if (FilterType == "pcf")
 	{
-		ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_PCF);
+		CurrentLevel->SetShadowFilterType(EShadowFilterType::PCF);
 		AddLog(ELogType::Success, "Shadow filter set to: PCF");
 	}
 	else if (FilterType == "none")
 	{
+		CurrentLevel->SetShadowFilterType(EShadowFilterType::None);
 		AddLog(ELogType::Success, "Shadow filter turned off (Hard Shadows).");
 	}
 	else
 	{
 		AddLog(ELogType::Error, "Unknown shadow filter type: '%s'", FilterType.c_str());
-		AddLog(ELogType::Info, "Available types: vsm, pcf, none");
-		return;
+		AddLog(ELogType::Info,  "Available types: vsm, pcf, none");
 	}
-	CurrentLevel->SetShowFlags(ShowFlags);
 }
 
 /**
