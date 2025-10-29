@@ -243,13 +243,13 @@ void UStatOverlay::RenderShadowInfo(ID2D1DeviceContext* D2DCtx)
 		{
 			DirectionalLightCount++;
 		}
-		else if (dynamic_cast<UPointLightComponent*>(Light))
-		{
-			PointLightCount++;
-		}
 		else if (dynamic_cast<USpotLightComponent*>(Light))
 		{
 			SpotLightCount++;
+		}
+		else if (dynamic_cast<UPointLightComponent*>(Light))
+		{
+			PointLightCount++;
 		}
 
 		if (Light->GetCastShadows())
