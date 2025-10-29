@@ -19,11 +19,15 @@ cbuffer PSMConstants  : register(b6)
     row_major float4x4 LightViewP[MAX_CASCADES]; // V_L'
     row_major float4x4 LightProjP[MAX_CASCADES]; // P_L'
     row_major float4x4 LightViewPInv[MAX_CASCADES]; // (V'_L)^(-1)
+    
+    float4 CascadeSplits[MAX_CASCADES / 4];
+    uint NumCascades;
+    float3 pad0;
 
     row_major float4x4 CameraClipToLightClip;
     
     float4 ShadowParams;               // // x=a(ShadowBias), y=b(ShadowSlopeBias), z=Sharpen(옵션), w=Reserved
-    float4 CascadeSplits;
+    float4 NotUsedCascadeSplits;
     float3 LightDirWS;                   // 월드공간 "표면→광원" 단위벡터
     uint   bInvertedLight;
 
@@ -35,7 +39,7 @@ cbuffer PSMConstants  : register(b6)
     uint bUseVSM;
     uint bUsePCF;
     uint bUseCSM;
-    float2 pad;
+    float2 pad1;
 }
 
 // Input/Output Structures

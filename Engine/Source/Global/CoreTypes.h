@@ -181,9 +181,13 @@ struct FShadowMapConstants
 	FMatrix LightProjP[MAX_CASCADES];    // P_L'
 	FMatrix LightViewPInv[MAX_CASCADES];  // (V'_L)^(-1)
 
+	float CascadeSplits[MAX_CASCADES];
+	uint32 NumCascades;
+	float Padding0[3];
+
 	FMatrix CameraClipToLightClip;
 	FVector4 ShadowParams; // x: depthBias, y: (reserved)
-	FVector4 CascadeSplits;
+	FVector4 NotUsedCascadeSplits;
 	FVector LightDirWS;                   // 월드공간 "표면→광원" 단위벡터
 	uint32  bInvertedLight;// 0: normal, 1: inverted (방향광에서는 보통 0)
 
@@ -193,7 +197,7 @@ struct FShadowMapConstants
 	uint32  bUseVSM;	// 0 = depth compare, 1 = VSM                                        
 	uint32  bUsePCF;
 	uint32  bUseCSM;	// 0 = no CSM, 1 = enable CSM
-	float   Padding[2];
+	float   Padding1[2];
 };
 
 // Spot Light dedicated shadow constants (single spot caster)

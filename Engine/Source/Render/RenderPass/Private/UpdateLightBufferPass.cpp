@@ -1326,8 +1326,10 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
         if (!Camera) return;
 
         CalculateCascadeSplits(OutShadowData.CascadeSplits, Camera);
-        CascadedShadowMapConstants.CascadeSplits = OutShadowData.CascadeSplits;
-        const float* pSplits = &OutShadowData.CascadeSplits.X;
+        /*CascadedShadowMapConstants.CascadeSplits = OutShadowData.CascadeSplits;
+        const float* pSplits = &OutShadowData.CascadeSplits.X;*/
+        memcpy(CascadedShadowMapConstants.CascadeSplits, OutShadowData.CascadeSplits, sizeof(float)* MAX_CASCADES);
+        const float* pSplits = OutShadowData.CascadeSplits;
 
         for (int i = 0; i < MAX_CASCADES; i++)
         {
@@ -1532,13 +1534,14 @@ void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType P
         CasterConsts.LightViewP[0] = InShadowData.LightViews[CascadeIndex];
         CasterConsts.LightProjP[0] = InShadowData.LightProjs[CascadeIndex];
 
-        CasterConsts.CascadeSplits = InShadowData.CascadeSplits;
+        //CasterConsts.CascadeSplits = InShadowData.CascadeSplits;
+        memcpy(CasterConsts.CascadeSplits, InShadowData.CascadeSplits, sizeof(float) * MAX_CASCADES);
     }
 
     FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, CasterConsts);
 }
 
-void FUpdateLightBufferPass::CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera)
+void FUpdateLightBufferPass::CalculateCascadeSplits(float* OutSplits, const UCamera* InCamera)
 {
     const float NearClip = InCamera->GetNearZ();
     const float FarClip = InCamera->GetFarZ();
@@ -1555,13 +1558,7 @@ void FUpdateLightBufferPass::CalculateCascadeSplits(FVector4& OutSplits, const U
         float UniformSplit = NearClip + ClipRange * p;
         float Distance = lambda * LogSplit + (1.0f - lambda) * UniformSplit;
 
-        switch (i)
-        {
-            case 0: OutSplits.X = Distance; break;
-            case 1: OutSplits.Y = Distance; break;
-            case 2: OutSplits.Z = Distance; break;
-            case 3: OutSplits.W = Distance; break;
-        }
+        OutSplits[i] = Distance;
     }
 }
 
