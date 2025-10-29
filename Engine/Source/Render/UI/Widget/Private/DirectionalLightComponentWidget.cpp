@@ -141,7 +141,24 @@ void UDirectionalLightComponentWidget::RenderWidget()
         {
             ImGui::TextColored(ImVec4(0.8f,0.5f,0.5f,1.0f), "Shadow map SRV not available.");
         }
+
+        ImGui::SeparatorText("Cascaded Shadow Maps");
+        static int cascadePreviewIndex = 0;
+        int numActiveCascades = 8;
+        ImGui::SliderInt("Preview Index", &cascadePreviewIndex, 0, numActiveCascades - 1);
+        
+        ID3D11ShaderResourceView* cascadeSRV = URenderer::GetInstance().GetDeviceResources()->GetCascadedShadowMapSliceSRV(cascadePreviewIndex);
+        if (cascadeSRV)
+        {
+            ImGui::Image((ImTextureID)cascadeSRV, ImVec2(256, 256));
+            ImGui::Text("Resolution: 2048 x 2048 (Depth)");
+        }
+        else
+        {
+            ImGui::Text("Cascade SRV not available for index %d.", cascadePreviewIndex);
+        }
     }
+
 
     ImGui::Separator();
 }

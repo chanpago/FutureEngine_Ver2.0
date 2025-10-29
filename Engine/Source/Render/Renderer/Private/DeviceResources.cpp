@@ -391,6 +391,15 @@ void UDeviceResources::ReleaseGizmoDepthBuffer()
 	SafeRelease(GizmoDepthTexture);
 }
 
+ID3D11ShaderResourceView* UDeviceResources::GetCascadedShadowMapSliceSRV(int CascadeIndex) const
+{
+	if (CascadeIndex >= 0 && CascadeIndex < MAX_CASCADES)
+	{
+		return CascadedShadowMapSliceSRVs[CascadeIndex];
+	}
+	return nullptr;
+}
+
 ID3D11DepthStencilView* UDeviceResources::GetCascadedShadowMapDSV(int CascadeIndex) const
 {
 	if (CascadeIndex >= 0 && CascadeIndex < MAX_CASCADES)
@@ -514,6 +523,19 @@ void UDeviceResources::CreateCascadedShadowMap()
 
 	hr = Device->CreateShaderResourceView(CascadedShadowMapColorTexture, &ColorSRVDesc, &CascadedShadowMapColorSRV);
 	if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM Color SRV"); return; }
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC sliceSrvDesc = {};
+	sliceSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	sliceSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+	sliceSrvDesc.Texture2DArray.MostDetailedMip = 0;
+	sliceSrvDesc.Texture2DArray.MipLevels = 1;
+	sliceSrvDesc.Texture2DArray.ArraySize = 1;
+	for (int i = 0; i < MAX_CASCADES; i++)
+	{
+		sliceSrvDesc.Texture2DArray.FirstArraySlice = i; 
+		hr = Device->CreateShaderResourceView(CascadedShadowMapTexture, &sliceSrvDesc, &CascadedShadowMapSliceSRVs[i]);
+		if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM Slice SRV for slice %d", i); }
+	}
 }
 
 void UDeviceResources::ReleaseCascadedShadowMap()
@@ -521,10 +543,8 @@ void UDeviceResources::ReleaseCascadedShadowMap()
 	for (int i = 0; i < MAX_CASCADES; i++)
 	{
 		SafeRelease(CascadedShadowMapDSVs[i]);
-	}
-	for (int i = 0; i < MAX_CASCADES; i++)
-	{
 		SafeRelease(CascadedShadowMapColorRTVs[i]);
+		SafeRelease(CascadedShadowMapSliceSRVs[i]);
 	}
 	SafeRelease(CascadedShadowMapSRV);
 	SafeRelease(CascadedShadowMapColorSRV);
