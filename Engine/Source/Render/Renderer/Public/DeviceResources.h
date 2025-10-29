@@ -144,6 +144,8 @@ public:
 	// Direct2D/DirectWrite factory getters
 	IDWriteFactory* GetDWriteFactory() const { return DWriteFactory; }
 
+	void GetShadowMapMemoryUsage(float& OutDirectional, float& OutCSM, float& OutPoint, float& OutSpot) const;
+
 private:
 	ID3D11Device* Device = nullptr;
 	ID3D11DeviceContext* DeviceContext = nullptr;

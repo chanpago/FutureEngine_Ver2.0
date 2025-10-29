@@ -1079,3 +1079,87 @@ void UDeviceResources::ReleaseShadowMapResources()
         SafeRelease(DirectionalShadowMapTextures[tier]);
     }
 }
+
+void UDeviceResources::GetShadowMapMemoryUsage(float& OutDirectional, float& OutCSM, float& OutPoint, float& OutSpot) const
+{
+    OutDirectional = 0.0f;
+    OutCSM = 0.0f;
+    OutPoint = 0.0f;
+    OutSpot = 0.0f;
+
+    D3D11_TEXTURE2D_DESC desc;
+
+    // Directional Light (Non-Cascaded)
+    for (int tier = 0; tier < 3; ++tier)
+    {
+        if (DirectionalShadowMapTextures[tier])
+        {
+            DirectionalShadowMapTextures[tier]->GetDesc(&desc);
+            OutDirectional += (float)(desc.Width * desc.Height * 4) / (1024.0f * 1024.0f);
+        }
+        if (DirectionalShadowMapColorTextures[tier])
+        {
+            DirectionalShadowMapColorTextures[tier]->GetDesc(&desc);
+            OutDirectional += (float)(desc.Width * desc.Height * 8) / (1024.0f * 1024.0f);
+        }
+    }
+
+    // Cascaded Shadow Maps
+    for (int tier = 0; tier < 3; ++tier)
+    {
+        if (CascadedShadowMapTextures[tier])
+        {
+            CascadedShadowMapTextures[tier]->GetDesc(&desc);
+            OutCSM += (float)(desc.Width * desc.Height * desc.ArraySize * 4) / (1024.0f * 1024.0f);
+        }
+        if (CascadedShadowMapColorTextures[tier])
+        {
+            CascadedShadowMapColorTextures[tier]->GetDesc(&desc);
+            OutCSM += (float)(desc.Width * desc.Height * desc.ArraySize * 8) / (1024.0f * 1024.0f);
+        }
+    }
+
+    // Spot Light
+    if (SpotShadowMapTexture)
+    {
+        SpotShadowMapTexture->GetDesc(&desc);
+        OutSpot += (float)(desc.Width * desc.Height * 4) / (1024.0f * 1024.0f);
+    }
+    if (SpotShadowMapColorTexture)
+    {
+        SpotShadowMapColorTexture->GetDesc(&desc);
+        OutSpot += (float)(desc.Width * desc.Height * 8) / (1024.0f * 1024.0f);
+    }
+
+    // Point Light
+    if (PointShadowLowTierTexture)
+    {
+        PointShadowLowTierTexture->GetDesc(&desc);
+        OutPoint += (float)(desc.Width * desc.Height * desc.ArraySize * 4) / (1024.0f * 1024.0f);
+    }
+    if (PointShadowLowTierColorTexture)
+    {
+        PointShadowLowTierColorTexture->GetDesc(&desc);
+        OutPoint += (float)(desc.Width * desc.Height * desc.ArraySize * 8) / (1024.0f * 1024.0f);
+    }
+    if (PointShadowMidTierTexture)
+    {
+        PointShadowMidTierTexture->GetDesc(&desc);
+        OutPoint += (float)(desc.Width * desc.Height * desc.ArraySize * 4) / (1024.0f * 1024.0f);
+    }
+    if (PointShadowMidTierColorTexture)
+    {
+        PointShadowMidTierColorTexture->GetDesc(&desc);
+        OutPoint += (float)(desc.Width * desc.Height * desc.ArraySize * 8) / (1024.0f * 1024.0f);
+    }
+    if (PointShadowHighTierTexture)
+    {
+        PointShadowHighTierTexture->GetDesc(&desc);
+        OutPoint += (float)(desc.Width * desc.Height * desc.ArraySize * 4) / (1024.0f * 1024.0f);
+    }
+    if (PointShadowHighTierColorTexture)
+    {
+        PointShadowHighTierColorTexture->GetDesc(&desc);
+        OutPoint += (float)(desc.Width * desc.Height * desc.ArraySize * 8) / (1024.0f * 1024.0f);
+    }
+}
