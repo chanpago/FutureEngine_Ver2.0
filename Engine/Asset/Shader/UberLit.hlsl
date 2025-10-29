@@ -142,13 +142,28 @@ struct FSpotShadowAtlasEntry
 };
 StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 
-// Point light shadow cube array and mapping (multiple point lights)
-TextureCubeArray PointShadowCubes : register(t14);
-StructuredBuffer<uint> PointShadowCubeIndices : register(t15);
-// Alternate 2D array view for PCF sampling
-Texture2DArray PointShadow2DArray : register(t16);
-// Moments 2D array for VSM (R32G32_FLOAT)
-Texture2DArray PointShadowMoments2DArray : register(t17);
+// Point light shadow 3-Tier system
+struct FPointShadowTierMapping
+{
+    uint Tier;           // 0=Low(512), 1=Mid(1024), 2=High(2048), 0xFFFFFFFF=no shadow
+    uint TierLocalIndex; // 0-7 within the tier's cube array
+};
+StructuredBuffer<FPointShadowTierMapping> PointShadowTierMappings : register(t14);
+
+// Low Tier (512x512) - Slots 15-17
+TextureCubeArray PointShadowLowTierCubes : register(t15);
+Texture2DArray PointShadowLowTier2DArray : register(t16);
+Texture2DArray PointShadowLowTierMoments : register(t17);
+
+// Mid Tier (1024x1024) - Slots 18-20
+TextureCubeArray PointShadowMidTierCubes : register(t18);
+Texture2DArray PointShadowMidTier2DArray : register(t19);
+Texture2DArray PointShadowMidTierMoments : register(t20);
+
+// High Tier (2048x2048) - Slots 21-23
+TextureCubeArray PointShadowHighTierCubes : register(t21);
+Texture2DArray PointShadowHighTier2DArray : register(t22);
+Texture2DArray PointShadowHighTierMoments : register(t23);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -618,12 +633,12 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     return (currentDepth - bias) > sd ? 0.0f : 1.0f;
 }
 
-// Compute point light shadow factor from cube array (no PCF/VSM, no bias)
+// Compute point light shadow factor from 3-Tier cube arrays
 float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, float3 worldPos)
 {
-    // Map global point light index to cube array index; 0xFFFFFFFF means not shadowed
-    uint cubeIdx = PointShadowCubeIndices[pointIndex];
-    if (cubeIdx == 0xFFFFFFFFu)
+    // Read tier mapping; 0xFFFFFFFF tier means not shadowed
+    FPointShadowTierMapping mapping = PointShadowTierMappings[pointIndex];
+    if (mapping.Tier == 0xFFFFFFFFu)
         return 1.0f;
 
     float3 V = worldPos - info.Position;
@@ -664,23 +679,42 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float D = -zn * zf / (zf - zn);
     float currentDepth = C + D / z_eye;
 
+    // Tier-local cube index and layer index
+    uint cubeIdx = mapping.TierLocalIndex;
+    uint layer = cubeIdx * 6 + (uint)faceIndex;
+
     // VSM path over moments 2D array
     if (bUseVSM != 0)
     {
-        uint layer = cubeIdx * 6 + (uint)faceIndex;
         static const float VSM_MipBias = 0.0f;
-        return ShadowVSM2DArray(PointShadowMoments2DArray, SamplerLinearClamp, float3(uv, layer), currentDepth, VSM_MipBias);
+        if (mapping.Tier == 0) // Low Tier
+            return ShadowVSM2DArray(PointShadowLowTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth, VSM_MipBias);
+        else if (mapping.Tier == 1) // Mid Tier
+            return ShadowVSM2DArray(PointShadowMidTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth, VSM_MipBias);
+        else // High Tier
+            return ShadowVSM2DArray(PointShadowHighTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth, VSM_MipBias);
     }
 
     // PCF path over 2D array SRV (uses hardware comparison sampler)
     if (bUsePCF != 0)
     {
-        uint layer = cubeIdx * 6 + (uint)faceIndex;
-        return ShadowPCF2DArray(PointShadow2DArray, SamplerPCF, float3(uv, layer), currentDepth);
+        if (mapping.Tier == 0) // Low Tier
+            return ShadowPCF2DArray(PointShadowLowTier2DArray, SamplerPCF, float3(uv, layer), currentDepth);
+        else if (mapping.Tier == 1) // Mid Tier
+            return ShadowPCF2DArray(PointShadowMidTier2DArray, SamplerPCF, float3(uv, layer), currentDepth);
+        else // High Tier
+            return ShadowPCF2DArray(PointShadowHighTier2DArray, SamplerPCF, float3(uv, layer), currentDepth);
     }
 
     // Default: binary compare from cube SRV
-    float sd = PointShadowCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+    float sd;
+    if (mapping.Tier == 0) // Low Tier
+        sd = PointShadowLowTierCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+    else if (mapping.Tier == 1) // Mid Tier
+        sd = PointShadowMidTierCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+    else // High Tier
+        sd = PointShadowHighTierCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
+
     return (currentDepth - 0.0001f <= sd) ? 1.0f : 0.0f;
 }
 

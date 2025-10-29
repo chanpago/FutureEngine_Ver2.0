@@ -226,13 +226,28 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	*/
 
 	// +-+ RTVS SETUP +-+
-	// Bind point shadow resources regardless of directional/spot availability
+	// Bind point shadow 3-Tier resources
 	{
 		FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-		Pipeline->SetShaderResourceView(14, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadowCubeSRV());
-		Pipeline->SetShaderResourceView(15, EShaderType::PS, LightBufferPass ? LightBufferPass->GetPointShadowCubeIndexSRV() : nullptr);
-		Pipeline->SetShaderResourceView(16, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadow2DArraySRV());
-		Pipeline->SetShaderResourceView(17, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadowColorSRV());
+		auto* DevRes = Renderer.GetDeviceResources();
+
+		// Slot 14: Tier mapping structured buffer (FPointShadowTierMapping)
+		Pipeline->SetShaderResourceView(14, EShaderType::PS, LightBufferPass ? LightBufferPass->GetPointShadowCubeIndexSRV() : nullptr);
+
+		// Slots 15-17: Low Tier (512x512)
+		Pipeline->SetShaderResourceView(15, EShaderType::PS, DevRes->GetPointShadowLowTierSRV());        // TextureCubeArray
+		Pipeline->SetShaderResourceView(16, EShaderType::PS, DevRes->GetPointShadowLowTier2DArraySRV()); // Texture2DArray for PCF
+		Pipeline->SetShaderResourceView(17, EShaderType::PS, DevRes->GetPointShadowLowTierColorSRV());   // VSM Moments
+
+		// Slots 18-20: Mid Tier (1024x1024)
+		Pipeline->SetShaderResourceView(18, EShaderType::PS, DevRes->GetPointShadowMidTierSRV());
+		Pipeline->SetShaderResourceView(19, EShaderType::PS, DevRes->GetPointShadowMidTier2DArraySRV());
+		Pipeline->SetShaderResourceView(20, EShaderType::PS, DevRes->GetPointShadowMidTierColorSRV());
+
+		// Slots 21-23: High Tier (2048x2048)
+		Pipeline->SetShaderResourceView(21, EShaderType::PS, DevRes->GetPointShadowHighTierSRV());
+		Pipeline->SetShaderResourceView(22, EShaderType::PS, DevRes->GetPointShadowHighTier2DArraySRV());
+		Pipeline->SetShaderResourceView(23, EShaderType::PS, DevRes->GetPointShadowHighTierColorSRV());
 	}
 
 	const auto& DeviceResources = Renderer.GetDeviceResources();

@@ -695,63 +695,56 @@ void UDeviceResources::ReleaseSpotShadowMapResources()
     SafeRelease(SpotShadowMapColorTexture);
 }
 
-void UDeviceResources::CreatePointShadowCubeResources()
+// Helper function to create a single tier's resources
+bool UDeviceResources::CreatePointShadowTier(
+    UINT Resolution,
+    ID3D11Texture2D** OutDepthTexture,
+    ID3D11ShaderResourceView** OutDepthSRV,
+    ID3D11ShaderResourceView** OutDepth2DArraySRV,
+    ID3D11DepthStencilView** OutDSVs,
+    ID3D11Texture2D** OutColorTexture,
+    ID3D11RenderTargetView** OutRTVs,
+    ID3D11ShaderResourceView** OutColorSRV)
 {
-    // Create a Texture2D array with 6 slices per cube (TextureCubeArray semantics)
-    SafeRelease(PointShadowCubeSRV);
-    for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
-    {
-        SafeRelease(PointShadowCubeDSVs[i]);
-    }
-    PointShadowCubeDSVsCount = 0;
-    SafeRelease(PointShadowCubeTexture);
+    const UINT ArraySize = MaxLightsPerTier * 6;
+    HRESULT hr;
 
-    if (!Device)
-    {
-        UE_LOG_ERROR("CreatePointShadowCubeResources: Device is null!");
-        return;
-    }
+    // Create Depth Texture
+    D3D11_TEXTURE2D_DESC depthDesc = {};
+    depthDesc.Width = Resolution;
+    depthDesc.Height = Resolution;
+    depthDesc.MipLevels = 1;
+    depthDesc.ArraySize = ArraySize;
+    depthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Usage = D3D11_USAGE_DEFAULT;
+    depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+    depthDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
 
-    const UINT FaceSize = 1024; // match PointShadowViewport; can be adjusted
-    const UINT NumCubes = MaxPointShadowLights;
-    const UINT ArraySize = 6 * NumCubes;
-
-    D3D11_TEXTURE2D_DESC texDesc = {};
-    texDesc.Width = FaceSize;
-    texDesc.Height = FaceSize;
-    texDesc.MipLevels = 1;
-    texDesc.ArraySize = ArraySize;
-    texDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
-    texDesc.SampleDesc.Count = 1;
-    texDesc.Usage = D3D11_USAGE_DEFAULT;
-    texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-    texDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
-
-    HRESULT hr = Device->CreateTexture2D(&texDesc, nullptr, &PointShadowCubeTexture);
+    hr = Device->CreateTexture2D(&depthDesc, nullptr, OutDepthTexture);
     if (FAILED(hr))
     {
-        UE_LOG_ERROR("Failed to create Point Shadow Cube Texture");
-        ReleasePointShadowCubeResources();
-        return;
+        UE_LOG_ERROR("Failed to create Point Shadow Tier depth texture (%dx%d)", Resolution, Resolution);
+        return false;
     }
 
-    // SRV as TextureCubeArray
+    // Create Depth SRV (TextureCubeArray)
     D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
     srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
     srvDesc.TextureCubeArray.MostDetailedMip = 0;
     srvDesc.TextureCubeArray.MipLevels = 1;
     srvDesc.TextureCubeArray.First2DArrayFace = 0;
-    srvDesc.TextureCubeArray.NumCubes = NumCubes;
-    hr = Device->CreateShaderResourceView(PointShadowCubeTexture, &srvDesc, &PointShadowCubeSRV);
+    srvDesc.TextureCubeArray.NumCubes = MaxLightsPerTier;
+
+    hr = Device->CreateShaderResourceView(*OutDepthTexture, &srvDesc, OutDepthSRV);
     if (FAILED(hr))
     {
-        UE_LOG_ERROR("Failed to create Point Shadow Cube SRV");
-        ReleasePointShadowCubeResources();
-        return;
+        UE_LOG_ERROR("Failed to create Point Shadow Tier depth SRV");
+        return false;
     }
 
-    // SRV as Texture2DArray (for PCF sampling via SampleCmp)
+    // Create 2D Array SRV for PCF
     D3D11_SHADER_RESOURCE_VIEW_DESC srv2D = {};
     srv2D.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
     srv2D.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
@@ -759,14 +752,10 @@ void UDeviceResources::CreatePointShadowCubeResources()
     srv2D.Texture2DArray.MipLevels = 1;
     srv2D.Texture2DArray.FirstArraySlice = 0;
     srv2D.Texture2DArray.ArraySize = ArraySize;
-    hr = Device->CreateShaderResourceView(PointShadowCubeTexture, &srv2D, &PointShadow2DArraySRV);
-    if (FAILED(hr))
-    {
-        UE_LOG_ERROR("Failed to create Point Shadow 2DArray SRV");
-        // Not fatal; PCF path for point lights will be disabled
-    }
 
-    // Create a DSV for each face slice
+    Device->CreateShaderResourceView(*OutDepthTexture, &srv2D, OutDepth2DArraySRV);
+
+    // Create DSVs (one per face)
     for (UINT slice = 0; slice < ArraySize; ++slice)
     {
         D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
@@ -775,101 +764,167 @@ void UDeviceResources::CreatePointShadowCubeResources()
         dsvDesc.Texture2DArray.MipSlice = 0;
         dsvDesc.Texture2DArray.FirstArraySlice = slice;
         dsvDesc.Texture2DArray.ArraySize = 1;
-        hr = Device->CreateDepthStencilView(PointShadowCubeTexture, &dsvDesc, &PointShadowCubeDSVs[slice]);
+
+        hr = Device->CreateDepthStencilView(*OutDepthTexture, &dsvDesc, &OutDSVs[slice]);
         if (FAILED(hr))
         {
-            UE_LOG_ERROR("Failed to create Point Shadow Cube DSV");
-            ReleasePointShadowCubeResources();
-            return;
+            UE_LOG_ERROR("Failed to create Point Shadow Tier DSV slice %d", slice);
+            return false;
         }
-        ++PointShadowCubeDSVsCount;
     }
 
-    // Create VSM color moments texture (R32G32_FLOAT), array, RTV per slice, SRV as Texture2DArray
+    // Create Color Texture (VSM)
+    D3D11_TEXTURE2D_DESC colorDesc = {};
+    colorDesc.Width = Resolution;
+    colorDesc.Height = Resolution;
+    colorDesc.MipLevels = 0; // Generate mips
+    colorDesc.ArraySize = ArraySize;
+    colorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
+    colorDesc.SampleDesc.Count = 1;
+    colorDesc.Usage = D3D11_USAGE_DEFAULT;
+    colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    colorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+
+    hr = Device->CreateTexture2D(&colorDesc, nullptr, OutColorTexture);
+    if (SUCCEEDED(hr))
     {
-        D3D11_TEXTURE2D_DESC colorDesc = {};
-        colorDesc.Width = FaceSize;
-        colorDesc.Height = FaceSize;
-        colorDesc.MipLevels = 0; // allow full mip chain
-        colorDesc.ArraySize = ArraySize;
-        colorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
-        colorDesc.SampleDesc.Count = 1;
-        colorDesc.Usage = D3D11_USAGE_DEFAULT;
-        colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-        colorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
-        hr = Device->CreateTexture2D(&colorDesc, nullptr, &PointShadowColorTexture);
-        if (FAILED(hr))
-        {
-            UE_LOG_ERROR("Failed to create Point Shadow Moments Texture");
-            // Not fatal for non-VSM paths
-        }
-        if (SUCCEEDED(hr))
-        {
-            for (UINT slice = 0; slice < ArraySize; ++slice)
-            {
-                D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-                rtvDesc.Format = colorDesc.Format;
-                rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-                rtvDesc.Texture2DArray.MipSlice = 0;
-                rtvDesc.Texture2DArray.FirstArraySlice = slice;
-                rtvDesc.Texture2DArray.ArraySize = 1;
-                HRESULT hrRTV = Device->CreateRenderTargetView(PointShadowColorTexture, &rtvDesc, &PointShadowColorRTVs[slice]);
-                if (FAILED(hrRTV))
-                {
-                    UE_LOG_ERROR("Failed to create Point Shadow Moments RTV");
-                    // Continue to try others
-                }
-            }
+        // Create Color SRV
+        D3D11_SHADER_RESOURCE_VIEW_DESC colorSRV = {};
+        colorSRV.Format = colorDesc.Format;
+        colorSRV.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+        colorSRV.Texture2DArray.MostDetailedMip = 0;
+        colorSRV.Texture2DArray.MipLevels = -1;
+        colorSRV.Texture2DArray.FirstArraySlice = 0;
+        colorSRV.Texture2DArray.ArraySize = ArraySize;
 
-            D3D11_SHADER_RESOURCE_VIEW_DESC srvDescC = {};
-            srvDescC.Format = colorDesc.Format;
-            srvDescC.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-            srvDescC.Texture2DArray.MostDetailedMip = 0;
-            srvDescC.Texture2DArray.MipLevels = -1; // all mips
-            srvDescC.Texture2DArray.FirstArraySlice = 0;
-            srvDescC.Texture2DArray.ArraySize = ArraySize;
-            HRESULT hrSRV = Device->CreateShaderResourceView(PointShadowColorTexture, &srvDescC, &PointShadowColorSRV);
-            if (FAILED(hrSRV))
-            {
-                UE_LOG_ERROR("Failed to create Point Shadow Moments SRV");
-            }
+        Device->CreateShaderResourceView(*OutColorTexture, &colorSRV, OutColorSRV);
+
+        // Create RTVs
+        for (UINT slice = 0; slice < ArraySize; ++slice)
+        {
+            D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+            rtvDesc.Format = colorDesc.Format;
+            rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+            rtvDesc.Texture2DArray.MipSlice = 0;
+            rtvDesc.Texture2DArray.FirstArraySlice = slice;
+            rtvDesc.Texture2DArray.ArraySize = 1;
+
+            Device->CreateRenderTargetView(*OutColorTexture, &rtvDesc, &OutRTVs[slice]);
         }
     }
+
+    UE_LOG("Created Point Shadow Tier: %dx%d, %d lights", Resolution, Resolution, MaxLightsPerTier);
+    return true;
+}
+
+void UDeviceResources::CreatePointShadowCubeResources()
+{
+    // Create 3-Tier shadow map system
+    UE_LOG("Creating 3-Tier Point Shadow Map System...");
+
+    if (!Device)
+    {
+        UE_LOG_ERROR("CreatePointShadowCubeResources: Device is null!");
+        return;
+    }
+
+    // Create Low Tier (512x512) - Scale 0.25~0.75
+    CreatePointShadowTier(
+        512,
+        &PointShadowLowTierTexture,
+        &PointShadowLowTierSRV,
+        &PointShadowLowTier2DArraySRV,
+        PointShadowLowTierDSVs,
+        &PointShadowLowTierColorTexture,
+        PointShadowLowTierRTVs,
+        &PointShadowLowTierColorSRV);
+
+    // Create Mid Tier (1024x1024) - Scale 0.76~1.5
+    CreatePointShadowTier(
+        1024,
+        &PointShadowMidTierTexture,
+        &PointShadowMidTierSRV,
+        &PointShadowMidTier2DArraySRV,
+        PointShadowMidTierDSVs,
+        &PointShadowMidTierColorTexture,
+        PointShadowMidTierRTVs,
+        &PointShadowMidTierColorSRV);
+
+    // Create High Tier (2048x2048) - Scale 1.51~4.0
+    CreatePointShadowTier(
+        2048,
+        &PointShadowHighTierTexture,
+        &PointShadowHighTierSRV,
+        &PointShadowHighTier2DArraySRV,
+        PointShadowHighTierDSVs,
+        &PointShadowHighTierColorTexture,
+        PointShadowHighTierRTVs,
+        &PointShadowHighTierColorSRV);
+
+    UE_LOG("3-Tier Point Shadow Map System created successfully!");
 }
 
 void UDeviceResources::ReleasePointShadowCubeResources()
 {
-    SafeRelease(PointShadowCubeSRV);
-    SafeRelease(PointShadow2DArraySRV);
-    SafeRelease(PointShadowColorSRV);
-    for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
-    {
-        SafeRelease(PointShadowColorRTVs[i]);
-        PointShadowColorRTVs[i] = nullptr;
-    }
-    for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
-    {
-        SafeRelease(PointShadowCubeDSVs[i]);
-        PointShadowCubeDSVs[i] = nullptr;
-    }
-    PointShadowCubeDSVsCount = 0;
-    SafeRelease(PointShadowCubeTexture);
-    SafeRelease(PointShadowColorTexture);
-}
+    UE_LOG("Releasing 3-Tier Point Shadow Map System...");
 
-bool UDeviceResources::CreatePointShadowFaceSRV(UINT CubeIndex, UINT FaceIndex, ID3D11ShaderResourceView** OutSRV) const
-{
-    if (!PointShadowCubeTexture || !OutSRV) return false;
-    const UINT slice = CubeIndex * 6 + (FaceIndex % 6);
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-    srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-    srvDesc.Texture2DArray.MostDetailedMip = 0;
-    srvDesc.Texture2DArray.MipLevels = 1;
-    srvDesc.Texture2DArray.FirstArraySlice = slice;
-    srvDesc.Texture2DArray.ArraySize = 1;
-    HRESULT hr = Device->CreateShaderResourceView(PointShadowCubeTexture, &srvDesc, OutSRV);
-    return SUCCEEDED(hr);
+    const UINT ArraySize = MaxLightsPerTier * 6;
+
+    // Release Low Tier
+    SafeRelease(PointShadowLowTierColorSRV);
+    for (UINT i = 0; i < ArraySize; ++i)
+    {
+        SafeRelease(PointShadowLowTierRTVs[i]);
+        PointShadowLowTierRTVs[i] = nullptr;
+    }
+    SafeRelease(PointShadowLowTierColorTexture);
+
+    for (UINT i = 0; i < ArraySize; ++i)
+    {
+        SafeRelease(PointShadowLowTierDSVs[i]);
+        PointShadowLowTierDSVs[i] = nullptr;
+    }
+    SafeRelease(PointShadowLowTier2DArraySRV);
+    SafeRelease(PointShadowLowTierSRV);
+    SafeRelease(PointShadowLowTierTexture);
+
+    // Release Mid Tier
+    SafeRelease(PointShadowMidTierColorSRV);
+    for (UINT i = 0; i < ArraySize; ++i)
+    {
+        SafeRelease(PointShadowMidTierRTVs[i]);
+        PointShadowMidTierRTVs[i] = nullptr;
+    }
+    SafeRelease(PointShadowMidTierColorTexture);
+
+    for (UINT i = 0; i < ArraySize; ++i)
+    {
+        SafeRelease(PointShadowMidTierDSVs[i]);
+        PointShadowMidTierDSVs[i] = nullptr;
+    }
+    SafeRelease(PointShadowMidTier2DArraySRV);
+    SafeRelease(PointShadowMidTierSRV);
+    SafeRelease(PointShadowMidTierTexture);
+
+    // Release High Tier
+    SafeRelease(PointShadowHighTierColorSRV);
+    for (UINT i = 0; i < ArraySize; ++i)
+    {
+        SafeRelease(PointShadowHighTierRTVs[i]);
+        PointShadowHighTierRTVs[i] = nullptr;
+    }
+    SafeRelease(PointShadowHighTierColorTexture);
+
+    for (UINT i = 0; i < ArraySize; ++i)
+    {
+        SafeRelease(PointShadowHighTierDSVs[i]);
+        PointShadowHighTierDSVs[i] = nullptr;
+    }
+    SafeRelease(PointShadowHighTier2DArraySRV);
+    SafeRelease(PointShadowHighTierSRV);
+    SafeRelease(PointShadowHighTierTexture);
+
+    UE_LOG("3-Tier Point Shadow Map System released successfully!");
 }
 
 /**

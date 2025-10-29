@@ -30,6 +30,20 @@ public:
 	void CreatePointShadowCubeResources();
 	void ReleasePointShadowCubeResources();
 
+private:
+	// Helper for creating a single shadow tier
+	bool CreatePointShadowTier(
+		UINT Resolution,
+		ID3D11Texture2D** OutDepthTexture,
+		ID3D11ShaderResourceView** OutDepthSRV,
+		ID3D11ShaderResourceView** OutDepth2DArraySRV,
+		ID3D11DepthStencilView** OutDSVs,
+		ID3D11Texture2D** OutColorTexture,
+		ID3D11RenderTargetView** OutRTVs,
+		ID3D11ShaderResourceView** OutColorSRV);
+
+public:
+
 	// CSM Resources
 	void CreateCascadedShadowMap();
 	void ReleaseCascadedShadowMap();
@@ -63,16 +77,32 @@ public:
     ID3D11RenderTargetView* GetSpotShadowMapColorRTV() const { return SpotShadowMapColorRTV; }
     ID3D11ShaderResourceView* GetSpotShadowMapColorSRV() const { return SpotShadowMapColorSRV; }
 
-    // Point Light Shadow Cube Getters
-    ID3D11ShaderResourceView* GetPointShadowCubeSRV() const { return PointShadowCubeSRV; }
-    ID3D11DepthStencilView* GetPointShadowCubeDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowCubeDSVs[SliceIndex] : nullptr; }
-    UINT GetMaxPointShadowLights() const { return MaxPointShadowLights; }
-    ID3D11ShaderResourceView* GetPointShadow2DArraySRV() const { return PointShadow2DArraySRV; }
-    // Point VSM (moments) getters
-    ID3D11ShaderResourceView* GetPointShadowColorSRV() const { return PointShadowColorSRV; }
-    ID3D11RenderTargetView* GetPointShadowColorRTV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < PointShadowCubeDSVsCount) ? PointShadowColorRTVs[SliceIndex] : nullptr; }
-    // Create a per-face SRV to a single cube face for preview/debug
-    bool CreatePointShadowFaceSRV(UINT CubeIndex, UINT FaceIndex, ID3D11ShaderResourceView** OutSRV) const;
+    // Point Light Shadow Cube Getters (3-Tier System)
+    // Low Tier (512x512)
+    ID3D11Texture2D* GetPointShadowLowTierTexture() const { return PointShadowLowTierTexture; }
+    ID3D11ShaderResourceView* GetPointShadowLowTierSRV() const { return PointShadowLowTierSRV; }
+    ID3D11ShaderResourceView* GetPointShadowLowTier2DArraySRV() const { return PointShadowLowTier2DArraySRV; }
+    ID3D11ShaderResourceView* GetPointShadowLowTierColorSRV() const { return PointShadowLowTierColorSRV; }
+    ID3D11DepthStencilView* GetPointShadowLowTierDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < MaxLightsPerTier * 6) ? PointShadowLowTierDSVs[SliceIndex] : nullptr; }
+    ID3D11RenderTargetView* GetPointShadowLowTierRTV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < MaxLightsPerTier * 6) ? PointShadowLowTierRTVs[SliceIndex] : nullptr; }
+
+    // Mid Tier (1024x1024)
+    ID3D11Texture2D* GetPointShadowMidTierTexture() const { return PointShadowMidTierTexture; }
+    ID3D11ShaderResourceView* GetPointShadowMidTierSRV() const { return PointShadowMidTierSRV; }
+    ID3D11ShaderResourceView* GetPointShadowMidTier2DArraySRV() const { return PointShadowMidTier2DArraySRV; }
+    ID3D11ShaderResourceView* GetPointShadowMidTierColorSRV() const { return PointShadowMidTierColorSRV; }
+    ID3D11DepthStencilView* GetPointShadowMidTierDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < MaxLightsPerTier * 6) ? PointShadowMidTierDSVs[SliceIndex] : nullptr; }
+    ID3D11RenderTargetView* GetPointShadowMidTierRTV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < MaxLightsPerTier * 6) ? PointShadowMidTierRTVs[SliceIndex] : nullptr; }
+
+    // High Tier (2048x2048)
+    ID3D11Texture2D* GetPointShadowHighTierTexture() const { return PointShadowHighTierTexture; }
+    ID3D11ShaderResourceView* GetPointShadowHighTierSRV() const { return PointShadowHighTierSRV; }
+    ID3D11ShaderResourceView* GetPointShadowHighTier2DArraySRV() const { return PointShadowHighTier2DArraySRV; }
+    ID3D11ShaderResourceView* GetPointShadowHighTierColorSRV() const { return PointShadowHighTierColorSRV; }
+    ID3D11DepthStencilView* GetPointShadowHighTierDSV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < MaxLightsPerTier * 6) ? PointShadowHighTierDSVs[SliceIndex] : nullptr; }
+    ID3D11RenderTargetView* GetPointShadowHighTierRTV(int SliceIndex) const { return (SliceIndex >= 0 && (UINT)SliceIndex < MaxLightsPerTier * 6) ? PointShadowHighTierRTVs[SliceIndex] : nullptr; }
+
+    UINT GetMaxLightsPerTier() const { return MaxLightsPerTier; }
 
 	ID3D11RenderTargetView* GetSceneColorRenderTargetView() const {return SceneColorTextureRTV; }
 	ID3D11ShaderResourceView* GetSceneColorShaderResourceView() const{return SceneColorTextureSRV; }
@@ -149,16 +179,33 @@ private:
 	ID2D1Factory* D2DFactory = nullptr;
 	IDWriteFactory* DWriteFactory = nullptr;
 
-	// Point Light Shadow Cube (TextureCubeArray depth)
-	static const UINT MaxPointShadowLights = 16; // capacity for shadowed point lights
-	ID3D11Texture2D* PointShadowCubeTexture = nullptr; // Array size = 6 * MaxPointShadowLights
-	ID3D11ShaderResourceView* PointShadowCubeSRV = nullptr; // SRV as TextureCubeArray
-	ID3D11ShaderResourceView* PointShadow2DArraySRV = nullptr; // SRV as Texture2DArray (for PCF)
-	ID3D11DepthStencilView* PointShadowCubeDSVs[6 * MaxPointShadowLights] = { nullptr }; // DSV per face slice
-	UINT PointShadowCubeDSVsCount = 0;
+	// Point Light Shadow 3-Tier System
+	static const UINT MaxLightsPerTier = 8; // Max lights per resolution tier
 
-	// Point VSM (moments) resources
-	ID3D11Texture2D* PointShadowColorTexture = nullptr; // R32G32_FLOAT moments, array
-	ID3D11RenderTargetView* PointShadowColorRTVs[6 * MaxPointShadowLights] = { nullptr };
-	ID3D11ShaderResourceView* PointShadowColorSRV = nullptr; // SRV as Texture2DArray
+	// Low Tier (512x512) - Scale 0.25~0.75
+	ID3D11Texture2D* PointShadowLowTierTexture = nullptr;
+	ID3D11ShaderResourceView* PointShadowLowTierSRV = nullptr;  // TextureCubeArray
+	ID3D11ShaderResourceView* PointShadowLowTier2DArraySRV = nullptr;  // Texture2DArray for PCF
+	ID3D11DepthStencilView* PointShadowLowTierDSVs[6 * MaxLightsPerTier] = { nullptr };
+	ID3D11Texture2D* PointShadowLowTierColorTexture = nullptr;  // VSM
+	ID3D11RenderTargetView* PointShadowLowTierRTVs[6 * MaxLightsPerTier] = { nullptr };
+	ID3D11ShaderResourceView* PointShadowLowTierColorSRV = nullptr;
+
+	// Mid Tier (1024x1024) - Scale 0.76~1.5
+	ID3D11Texture2D* PointShadowMidTierTexture = nullptr;
+	ID3D11ShaderResourceView* PointShadowMidTierSRV = nullptr;
+	ID3D11ShaderResourceView* PointShadowMidTier2DArraySRV = nullptr;
+	ID3D11DepthStencilView* PointShadowMidTierDSVs[6 * MaxLightsPerTier] = { nullptr };
+	ID3D11Texture2D* PointShadowMidTierColorTexture = nullptr;
+	ID3D11RenderTargetView* PointShadowMidTierRTVs[6 * MaxLightsPerTier] = { nullptr };
+	ID3D11ShaderResourceView* PointShadowMidTierColorSRV = nullptr;
+
+	// High Tier (2048x2048) - Scale 1.51~4.0
+	ID3D11Texture2D* PointShadowHighTierTexture = nullptr;
+	ID3D11ShaderResourceView* PointShadowHighTierSRV = nullptr;
+	ID3D11ShaderResourceView* PointShadowHighTier2DArraySRV = nullptr;
+	ID3D11DepthStencilView* PointShadowHighTierDSVs[6 * MaxLightsPerTier] = { nullptr };
+	ID3D11Texture2D* PointShadowHighTierColorTexture = nullptr;
+	ID3D11RenderTargetView* PointShadowHighTierRTVs[6 * MaxLightsPerTier] = { nullptr };
+	ID3D11ShaderResourceView* PointShadowHighTierColorSRV = nullptr;
 };

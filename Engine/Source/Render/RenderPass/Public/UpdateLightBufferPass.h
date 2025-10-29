@@ -8,6 +8,16 @@ class UPointLightComponent;
 class UStaticMeshComponent;
 
 /**
+ * @brief Point Light Shadow Tier Mapping Structure
+ * Maps global point light index to tier and tier-local cube index
+ */
+struct FPointShadowTierMapping
+{
+    uint32 Tier;           // 0=Low(512), 1=Mid(1024), 2=High(2048), 0xFFFFFFFF=no shadow
+    uint32 TierLocalIndex; // 0-7 within the tier's cube array
+};
+
+/**
  * @brief Shadow Map을 베이킹하는 RenderPass
  * Light의 관점에서 장면을 렌더링하여 Shadow Map 텍스처를 생성합니다.
  */
