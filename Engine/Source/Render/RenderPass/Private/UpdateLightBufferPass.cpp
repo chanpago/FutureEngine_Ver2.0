@@ -1646,6 +1646,10 @@ void FUpdateLightBufferPass::BuildSpotLightPSM(const FMatrix& EyeView, const FMa
         // NDC → Camera View Space
         FVector4 clipSpace = FVector4(ndcCorners[i], 1.0f);
         FVector4 viewSpace = FMatrix::VectorMultiply(clipSpace, EyeProjInv);
+        if (viewSpace.W < 0 )
+        {
+            continue;
+        }
         if (fabsf(viewSpace.W) > 1e-6f) {
             viewSpace.X /= viewSpace.W;
             viewSpace.Y /= viewSpace.W;
@@ -1667,6 +1671,10 @@ void FUpdateLightBufferPass::BuildSpotLightPSM(const FMatrix& EyeView, const FMa
                 warpedClip.Y / warpedClip.W,
                 warpedClip.Z / warpedClip.W
             );
+
+            warpedNDC.X = std::max(-5.0f, std::min(5.0f, warpedNDC.X));
+            warpedNDC.Y = std::max(-5.0f, std::min(5.0f, warpedNDC.Y));
+            warpedNDC.Z = std::max(-1.0f, std::min(2.0f, warpedNDC.Z));
             
             minWarped.X = std::min(minWarped.X, warpedNDC.X);
             minWarped.Y = std::min(minWarped.Y, warpedNDC.Y);
