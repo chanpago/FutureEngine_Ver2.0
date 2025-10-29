@@ -318,14 +318,14 @@ struct PS_OUTPUT
     float4 NormalData : SV_Target1;
 };
 
-float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
+float CalculateVSM(float2 Moments, float CurrentDepth, float Bias, float Sharpen)
 {
     // VSM: configurable smoothing via mip bias
     static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
     static const float VSM_BleedReduction = 0.2f; // 0..1, higher reduces light bleeding
 
     // Clamp depth into [0,1] and apply small bias
-    float z = saturate(CurrentDepth - Bias);
+    float z = saturate(CurrentDepth - ShadowParams.x);
     float m1 = Moments.x;
     float m2 = Moments.y;
 
@@ -334,6 +334,9 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
     float d = z - m1;
     float pMax = saturate(variance / (variance + d * d));
 
+    float sharpenPower = 1.0f + Sharpen * 15.0f; // Sharpen 0~1 -> Power 1~16
+    pMax = pow(saturate(pMax), sharpenPower);
+    
     // Light bleeding reduction
     float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
     return visibility;
@@ -358,19 +361,19 @@ inline float ShadowPCF2D(Texture2D DepthTex, SamplerComparisonState Comp, float2
 }
 
 // 2D VSM from moments texture
-inline float ShadowVSM2D(Texture2D MomentsTex, SamplerState Samp, float2 uv, float currentDepth, float mipBias)
+inline float ShadowVSM2D(Texture2D MomentsTex, SamplerState Samp, float2 uv, float currentDepth, float mipBias, float Sharpen)
 {
     float2 mom = MomentsTex.SampleBias(Samp, uv, mipBias).rg;
-    return CalculateVSM(mom, currentDepth, mipBias);
+    return CalculateVSM(mom, currentDepth, mipBias, Sharpen);
 }
 
 // 2D array VSM (e.g., cascades)
-inline float ShadowVSM2DArray(Texture2DArray MomentsTex, SamplerState Samp, float3 uvLayer, float currentDepth, float mipBias)
+inline float ShadowVSM2DArray(Texture2DArray MomentsTex, SamplerState Samp, float3 uvLayer, float currentDepth, float mipBias, float Sharpen)
 {
     // Prefer clamp sampling and explicit LOD for stability across cascades
     static const float VSM_LOD = 1.0f; // tweakable softness via lower-res moments
     float2 mom = MomentsTex.SampleLevel(Samp, uvLayer, VSM_LOD).rg;
-    return CalculateVSM(mom, currentDepth, mipBias);
+    return CalculateVSM(mom, currentDepth, mipBias, Sharpen);
 }
 
 // 2D array PCF (3x3)
@@ -417,7 +420,8 @@ float SampleCascadeShadowValue(float3 WorldPosition, int Cascade)
     else if (bUseVSM)
     {
         static const float VSMMipBias = 1.25f;
-        return ShadowVSM2DArray(CascadedShadowMapTexture, SamplerLinearClamp, float3(ShadowTextureUv, Cascade), CurrentDepth, VSMMipBias);
+        return ShadowVSM2DArray(CascadedShadowMapTexture, SamplerLinearClamp, float3(ShadowTextureUv, Cascade),
+            CurrentDepth, VSMMipBias, Directional.Sharpen);
     }
     else
     {
@@ -528,7 +532,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     else if (bUseVSM != 0)
     {
         static const float VSM_MipBias = 1.25f; // tweakable softness
-        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth, VSM_MipBias);
+        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth, VSM_MipBias, Directional.Sharpen);
     }
     return 1.0f;
 }
@@ -583,7 +587,7 @@ float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
     else if (bUseVSM != 0)
     {
         static const float VSM_MipBias = 1.25f;
-        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth - combinedBias, VSM_MipBias);
+        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth - combinedBias, VSM_MipBias, Directional.Sharpen);
     }
     return 1.0f;
 }
@@ -657,7 +661,7 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos, float3 w
     if (bUseVSM != 0)
     {
         static const float VSM_MipBias = 0.0f; // could increase for softer
-        return ShadowVSM2D(SpotShadowMapTexture, SamplerLinearClamp, uvAtlas, currentDepth, VSM_MipBias);
+        return ShadowVSM2D(SpotShadowMapTexture, SamplerLinearClamp, uvAtlas, currentDepth, VSM_MipBias, spotInfo.Sharpen);
     }
 
     // Default: binary comparison using regular sampler
@@ -724,11 +728,11 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     {
         static const float VSM_MipBias = 0.0f;
         if (mapping.Tier == 0) // Low Tier
-            return ShadowVSM2DArray(PointShadowLowTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias);
+            return ShadowVSM2DArray(PointShadowLowTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias, info.Sharpen);
         else if (mapping.Tier == 1) // Mid Tier
-            return ShadowVSM2DArray(PointShadowMidTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias);
+            return ShadowVSM2DArray(PointShadowMidTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias, info.Sharpen);
         else // High Tier
-            return ShadowVSM2DArray(PointShadowHighTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias);
+            return ShadowVSM2DArray(PointShadowHighTierMoments, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias, info.Sharpen);
     }
 
     // PCF path over 2D array SRV (uses hardware comparison sampler)
