@@ -614,6 +614,12 @@ float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
 {
     // Compute base values as in PSM_Visibility
     float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
+    
+    if (bUseCSM != 0)
+    {
+        return SampleShadowCSM(worldPos, ViewDepth);
+    }
+    
     float4 sh;
     if (bUsePSM == 1) {
         float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
@@ -640,12 +646,8 @@ float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
     float3 Ldir = SafeNormalize3(LightDirWS);
     float ndotl_abs = abs(dot(worldNormal, Ldir));
     float combinedBias = Directional.Bias + Directional.SlopeBias * (1.0f - ndotl_abs);
-
-    if (bUseCSM != 0)
-    {
-        return SampleShadowCSM(worldPos, ViewDepth);
-    }
-    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
+    
+    if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         float sd = ShadowMapTexture.SampleLevel(SamplerWrap, ShadowUV, 0).r;
         return (CurrentDepth - combinedBias <= sd) ? 1.0f : 0.0f;
