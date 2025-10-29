@@ -139,10 +139,7 @@ VS_OUTPUT mainVS(VS_INPUT input)
     else
     {
         // Standard SpotLight Shadow: World→Light 직접 변환 (bias 적용)
-        float a = ShadowParams.x;
-        float3 biasDir = normalize(LightDirWS);  // "표면 → 광원" 방향
-        float3 biasedPos = worldPos.xyz + biasDir * a;
-        o.Position = mul(mul(float4(biasedPos, 1.0f), LightViewP[0]), LightProjP[0]);
+        o.Position = mul(mul(worldPos, LightViewP[0]), LightProjP[0]);
     }
     
     o.Depth = o.Position.z / o.Position.w;
