@@ -26,12 +26,16 @@ class UEditor : public UObject
 {
 	DECLARE_CLASS(UEditor, UObject)
 public:
-	UEditor();
-	~UEditor();
+    UEditor();
+    ~UEditor();
 
 	void Update();
 	void RenderEditor();
-	void RenderGizmo(UCamera* InCamera);
+    void RenderGizmo(UCamera* InCamera);
+
+    // Toggle transform gizmo visibility (translation/rotation/scale)
+    void SetGizmoVisible(bool b) { bRenderGizmo = b; }
+    bool GetGizmoVisible() const { return bRenderGizmo; }
 
 	void SetViewMode(EViewModeIndex InNewViewMode) { CurrentViewMode = InNewViewMode; }
 	EViewModeIndex GetViewMode() const { return CurrentViewMode; }
@@ -70,8 +74,9 @@ private:
 
 	UCamera* Camera;
 	UGizmo Gizmo;
-	UAxis Axis;
-	UBatchLines BatchLines;
+    UAxis Axis;
+    UBatchLines BatchLines;
+    bool bRenderGizmo = true; // controls transform gizmo rendering
 	
 	// InteractionViewport 제거: ViewportManager가 레이아웃 관리
 

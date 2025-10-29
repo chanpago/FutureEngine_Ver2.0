@@ -71,7 +71,7 @@ void UPointLightComponent::EnsureVisualizationBillboard()
 	Billboard->AttachToComponent(this);
 	Billboard->SetIsVisualizationComponent(true);
 	Billboard->SetSprite(UAssetManager::GetInstance().LoadTexture("Data/Icons/S_LightPoint.png"));
-	Billboard->SetRelativeScale3D(FVector(2.f,2.f,2.f));
+	Billboard->SetRelativeScale3D(FVector(1.5f, 1.5f, 1.5f));
 	Billboard->SetScreenSizeScaled(true);
 
 	VisualizationBillboard = Billboard;

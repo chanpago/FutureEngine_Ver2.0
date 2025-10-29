@@ -11,7 +11,7 @@
 #define NUM_POINT_LIGHT 8
 #define NUM_SPOT_LIGHT 8
 #define ADD_ILLUM(a, b) { (a).Ambient += (b).Ambient; (a).Diffuse += (b).Diffuse; (a).Specular += (b).Specular; }
-#define MAX_CASCADES 4
+#define MAX_CASCADES 8
 
 static const float PI = 3.14159265f;
 
@@ -150,6 +150,10 @@ StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 // Point light shadow cube array and mapping (multiple point lights)
 TextureCubeArray PointShadowCubes : register(t14);
 StructuredBuffer<uint> PointShadowCubeIndices : register(t15);
+// Alternate 2D array view for PCF sampling
+Texture2DArray PointShadow2DArray : register(t16);
+// Moments 2D array for VSM (R32G32_FLOAT)
+Texture2DArray PointShadowMoments2DArray : register(t17);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -302,6 +306,60 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
     return visibility;
 }
 
+// -----------------------------------------------------------------------------
+// Generic shadow helpers to minimize duplication across light types
+// -----------------------------------------------------------------------------
+// 2D PCF using hardware comparison sampler (3x3)
+inline float ShadowPCF2D(Texture2D DepthTex, SamplerComparisonState Comp, float2 uv, float currentDepth)
+{
+    uint w, h; DepthTex.GetDimensions(w, h);
+    float2 texel = 1.0 / float2(w, h);
+    float sum = 0.0;
+    [unroll] for (int dy = -1; dy <= 1; ++dy)
+    [unroll] for (int dx = -1; dx <= 1; ++dx)
+    {
+        float2 o = float2(dx, dy) * texel;
+        sum += DepthTex.SampleCmpLevelZero(Comp, uv + o, currentDepth);
+    }
+    return sum / 9.0f;
+}
+
+// 2D simple binary compare (no PCF)
+inline float ShadowBinary2D(Texture2D DepthTex, SamplerState Samp, float2 uv, float currentDepth)
+{
+    float sd = DepthTex.SampleLevel(Samp, uv, 0).r;
+    return (currentDepth <= sd) ? 1.0f : 0.0f;
+}
+
+// 2D VSM from moments texture
+inline float ShadowVSM2D(Texture2D MomentsTex, SamplerState Samp, float2 uv, float currentDepth, float mipBias)
+{
+    float2 mom = MomentsTex.SampleBias(Samp, uv, mipBias).rg;
+    return CalculateVSM(mom, currentDepth, mipBias);
+}
+
+// 2D array VSM (e.g., cascades)
+inline float ShadowVSM2DArray(Texture2DArray MomentsTex, SamplerState Samp, float3 uvLayer, float currentDepth, float mipBias)
+{
+    float2 mom = MomentsTex.Sample(Samp, uvLayer).rg; // Biasing for arrays can be driver-limited; keep 0 bias
+    return CalculateVSM(mom, currentDepth, mipBias);
+}
+
+// 2D array PCF (3x3)
+inline float ShadowPCF2DArray(Texture2DArray DepthTex, SamplerComparisonState Comp, float3 uvLayer, float currentDepth)
+{
+    uint w, h, layers; DepthTex.GetDimensions(w, h, layers);
+    float2 texel = 1.0 / float2(max(1u,w), max(1u,h));
+    float sum = 0.0;
+    [unroll] for (int dy = -1; dy <= 1; ++dy)
+    [unroll] for (int dx = -1; dx <= 1; ++dx)
+    {
+        float2 o = float2(dx, dy) * texel;
+        sum += DepthTex.SampleCmpLevelZero(Comp, float3(uvLayer.xy + o, uvLayer.z), currentDepth - 0.0001f);
+    }
+    return sum / 9.0f;
+}
+
 // 반환: 가시도(1=조명 통과, 0=완전 그림자)
 // Shadow Map 샘플링 함수
 /*float CalculateShadowFactor(float3 WorldPos)
@@ -386,6 +444,70 @@ float CalculateVSM(float2 Moments, float CurrentDepth, float Bias)
     
     return Shadow;
 }*/
+
+float SampleShadowCSM(float3 worldPos, float viewDepth)
+{
+    // Select Cascade
+    int CascadeIndex = 0;
+    if (viewDepth > CascadeSplits.x)
+        CascadeIndex = 1;
+    if (viewDepth > CascadeSplits.y)
+        CascadeIndex = 2;
+    if (viewDepth > CascadeSplits.z)
+        CascadeIndex = 3;
+       
+    // World to Light Space
+    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[CascadeIndex]);
+    LightSpacePos = mul(LightSpacePos, LightProjP[CascadeIndex]);
+    LightSpacePos.xyz /= LightSpacePos.w;
+        
+    // NDC[-1.1] to UV[0,1]
+    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+    ShadowUV.y = 1.0f - ShadowUV.y;
+    float CurrentDepth = LightSpacePos.z;
+        
+    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+        return 1.0f;
+        
+    // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
+    // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        
+    float bias = ShadowParams.x;
+    
+    if (bUsePCF)
+    {
+        // ---------------- 3x3 PCF FILTER ----------------
+        uint Width, Height, Layers;
+        CascadedShadowMapTexture.GetDimensions(Width, Height, Layers);
+        float2 TexelSize = 1.0f / float2(Width, Height);
+
+        float ShadowSum = 0.0f;
+        [unroll] for (int dy = -1; dy <= 1; ++dy)
+        [unroll] for (int dx = -1; dx <= 1; ++dx)
+        {
+            float2 Offset = float2(dx, dy) * TexelSize;
+            ShadowSum += CascadedShadowMapTexture.SampleCmpLevelZero(
+            SamplerPCF, float3(ShadowUV + Offset, CascadeIndex),
+            CurrentDepth - bias);
+        }
+
+        return ShadowSum / 9.0f;
+    }
+    else if (bUseVSM)
+    {
+        // ---------------- VARIANCE SHADOW MAPPING ----------------
+        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
+        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
+        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+    }
+    else
+    {
+        // ---------------- HARD COMPARE (TMP) ----------------
+        float ShadowMapDepth = CascadedShadowMapTexture.SampleLevel(SamplerLinearClamp, float3(ShadowUV, CascadeIndex), 0).r;
+        return (CurrentDepth - bias) <= ShadowMapDepth ? 1.0f : 0.0f;
+    }
+}
+
 float PSM_Visibility(float3 worldPos)
 {
     // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
@@ -467,89 +589,21 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     
     if (bUseCSM != 0)
     {
-        int CascadeIndex = 0;
-        if (ViewDepth > CascadeSplits.x)    CascadeIndex = 1;
-        if (ViewDepth > CascadeSplits.y)    CascadeIndex = 2;
-        if (ViewDepth > CascadeSplits.z)    CascadeIndex = 3;
-        
-        float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[CascadeIndex]);
-        LightSpacePos = mul(LightSpacePos, LightProjP[CascadeIndex]);
-        LightSpacePos.xyz /= LightSpacePos.w;
-        
-        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-        ShadowUV.y = 1.0f - ShadowUV.y;
-        
-        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-            return 1.0f;
-        
-        float CurrentDepth = LightSpacePos.z;
-        // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
-        // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-        
-        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
-        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
-        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+        return SampleShadowCSM(worldPos, ViewDepth);
     }
     else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
-        float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
-        float Shadow = (CurrentDepth - ShadowParams[0]) > ShadowMapDepth ? 0.0f : 1.0f;
-        //float Shadow = (CurrentDepth - 0) > ShadowMapDepth ? 0.0f : 1.0f;
-        return Shadow;
+        return ShadowBinary2D(ShadowMapTexture, SamplerWrap, ShadowUV, CurrentDepth - ShadowParams[0]);
     }
     else if (bUsePCF != 0)
     {
-        // 3x3 PCF (Percentage-Closer Filtering)
-        float Shadow = 0.0f;
-        float2 TexelSize;
-        uint Width, Height;
-        ShadowMapTexture.GetDimensions(Width, Height); // 텍스처의 가로, 세로 가져오기
-        TexelSize = 1.0f / float2(Width, Height); // 한 텍셀의 사이즈
-    
-        // 3x3 커널 순회
-        for (int x = -1; x <= 1; ++x)
-        {
-            for (int y = -1; y <= 1; ++y)
-            {
-                float2 Offset = float2(x, y) * TexelSize;
-                // CurrentDepth - bias <= ShadowMapDepth
-                // ShadowUV + Offset에서 읽은 depth와 세번째 인자랑 비교
-                // 세번째 인자가 더 작으면 true -> 1.0 반환 (빛 받음)
-                // 아니라면 false -> 0.0 반환 (그림자)
-     
-                Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowParams[0]);
-                //Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - 0.0f);
-            }
-        }
-        // 9개 평균 계산하여 부드러운 그림자 값
-        Shadow /= 9.0f;
-        return Shadow;
+        return ShadowPCF2D(ShadowMapTexture, SamplerPCF, ShadowUV, CurrentDepth - ShadowParams[0]);
     }
-    else if(bUseVSM != 0)
+    else if (bUseVSM != 0)
     {
-        // VSM: configurable smoothing via mip bias
-        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
-        static const float VSM_MinVariance = 1e-5f; // Floors variance to reduce hard edges
-        static const float VSM_BleedReduction = 0.2f; // 0..1, higher reduces light bleeding
-
-        // Variance Shadow Mapping using precomputed moments (R32G32_FLOAT)
-        float2 Moments = ShadowMapTexture.SampleBias(SamplerLinearClamp, ShadowUV, VSM_MipBias).rg;
-
-        // Clamp depth into [0,1] and apply small bias
-        float z = saturate(CurrentDepth - ShadowParams[0]);
-        //float z = saturate(CurrentDepth - 0);
-        float m1 = Moments.x;
-        float m2 = Moments.y;
-
-        // Variance and Chebyshev upper bound
-        float variance = max(m2 - m1 * m1, VSM_MinVariance);
-        float d = z - m1;
-        float pMax = saturate(variance / (variance + d * d));
-
-        // Light bleeding reduction
-        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
-        return visibility;
+        static const float VSM_MipBias = 1.25f; // tweakable softness
+        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth, VSM_MipBias);
     }
     return 1.0f;
 }
@@ -609,40 +663,14 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     // PCF path (3x3) using hardware comparison sampler
     if (bUsePCF != 0)
     {
-        float shadow = 0.0f;
-        // One texel in atlas UV space
-        float2 texel = atlasTexel;
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
-        {
-            [unroll]
-            for (int y = -1; y <= 1; ++y)
-            {
-                float2 o = float2(x, y) * texel;
-                shadow += SpotShadowMapTexture.SampleCmpLevelZero(SamplerPCF, uvAtlas + o, currentDepth - bias);
-            }
-        }
-        return shadow / 9.0f;
+        return ShadowPCF2D(SpotShadowMapTexture, SamplerPCF, uvAtlas, currentDepth - bias);
     }
 
     // VSM path using precomputed moments (R32G32_FLOAT)
     if (bUseVSM != 0)
     {
-        // Sample moments without derivatives to allow dynamic loops
-        float2 Moments = SpotShadowMapTexture.SampleLevel(SamplerLinearClamp, uvAtlas, 0).rg;
-
-        // Chebyshev upper bound
-        static const float VSM_MinVariance = 1e-5f;
-        static const float VSM_BleedReduction = 0.2f;
-
-        float z = saturate(currentDepth - bias);
-        float m1 = Moments.x;
-        float m2 = Moments.y;
-        float variance = max(m2 - m1 * m1, VSM_MinVariance);
-        float d = z - m1;
-        float pMax = saturate(variance / (variance + d * d));
-        float visibility = (z <= m1) ? 1.0f : saturate((pMax - VSM_BleedReduction) / (1.0f - VSM_BleedReduction));
-        return visibility;
+        static const float VSM_MipBias = 0.0f; // could increase for softer
+        return ShadowVSM2D(SpotShadowMapTexture, SamplerLinearClamp, uvAtlas, currentDepth, VSM_MipBias);
     }
 
     // Default: binary comparison using regular sampler
@@ -668,9 +696,25 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float3 dir = V / dist;
     float3 a = abs(dir);
     float3 F;
-    if (a.x >= a.y && a.x >= a.z) F = (dir.x > 0.0f) ? float3(1,0,0) : float3(-1,0,0);
-    else if (a.y >= a.z)          F = (dir.y > 0.0f) ? float3(0,1,0) : float3(0,-1,0);
-    else                          F = (dir.z > 0.0f) ? float3(0,0,1) : float3(0,0,-1);
+    int faceIndex;
+    float2 uv;
+    if (a.x >= a.y && a.x >= a.z)
+    {
+        if (dir.x > 0.0f) { F = float3(1,0,0);  uv = float2(-dir.z,  dir.y) / a.x; faceIndex = 0; }
+        else               { F = float3(-1,0,0); uv = float2( dir.z,  dir.y) / a.x; faceIndex = 1; }
+    }
+    else if (a.y >= a.z)
+    {
+        if (dir.y > 0.0f) { F = float3(0,1,0);  uv = float2( dir.x, -dir.z) / a.y; faceIndex = 2; }
+        else               { F = float3(0,-1,0); uv = float2( dir.x,  dir.z) / a.y; faceIndex = 3; }
+    }
+    else
+    {
+        if (dir.z > 0.0f) { F = float3(0,0,1);  uv = float2( dir.x,  dir.y) / a.z; faceIndex = 4; }
+        else               { F = float3(0,0,-1); uv = float2(-dir.x,  dir.y) / a.z; faceIndex = 5; }
+    }
+    uv = uv * 0.5f + 0.5f;
+    uv.y = 1.0f - uv.y; // DirectX UV flip
 
     // Reconstruct depth value used by the depth buffer for a 90° LH perspective with zn=0.1 and zf=info.Range
     const float zn = 0.1f;
@@ -680,6 +724,22 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float D = -zn * zf / (zf - zn);
     float currentDepth = C + D / z_eye;
 
+    // VSM path over moments 2D array
+    if (bUseVSM != 0)
+    {
+        uint layer = cubeIdx * 6 + (uint)faceIndex;
+        static const float VSM_MipBias = 0.0f;
+        return ShadowVSM2DArray(PointShadowMoments2DArray, SamplerLinearClamp, float3(uv, layer), currentDepth, VSM_MipBias);
+    }
+
+    // PCF path over 2D array SRV (uses hardware comparison sampler)
+    if (bUsePCF != 0)
+    {
+        uint layer = cubeIdx * 6 + (uint)faceIndex;
+        return ShadowPCF2DArray(PointShadow2DArray, SamplerPCF, float3(uv, layer), currentDepth);
+    }
+
+    // Default: binary compare from cube SRV
     float sd = PointShadowCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
     return (currentDepth - 0.0001f <= sd) ? 1.0f : 0.0f;
 }

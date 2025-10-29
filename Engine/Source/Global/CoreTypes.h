@@ -169,7 +169,7 @@ struct FGlobalLightConstant
 	FDirectionalLightInfo Directional;
 };
 
-#define MAX_CASCADES 4
+#define MAX_CASCADES 8
 
 struct FShadowMapConstants
 {

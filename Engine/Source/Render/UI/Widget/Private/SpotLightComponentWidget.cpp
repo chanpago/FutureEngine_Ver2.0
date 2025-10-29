@@ -7,6 +7,10 @@
 #include "ImGui/imgui.h"
 #include "Render/Renderer/Public/Renderer.h"
 #include "Render/Renderer/Public/RenderResourceFactory.h"
+#include "Manager/UI/Public/ViewportManager.h"
+#include "Editor/Public/Camera.h"
+#include "Editor/Public/Editor.h"
+#include "Render/UI/Viewport/Public/ViewportClient.h"
 
 IMPLEMENT_CLASS(USpotLightComponentWidget, UWidget)
 
@@ -178,6 +182,75 @@ void USpotLightComponentWidget::RenderWidget()
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("그림자 활성화 (논문 기반 PSM 사용)\nON: PSM (Perspective Shadow Maps) - 카메라 post-perspective 공간에서 생성\nOFF: Standard Shadow - 일반 spotlight shadow");
+    }
+
+    // Override camera with light's perspective (position + orientation + FOV) + auto-restore
+    static bool bViewFromSpot = false;
+    static bool bPrevViewFromSpot = false;
+    struct FSavedCam { bool Has=false; ECameraType Type; FVector Loc; FVector Rot; float Fov; float NearZ; float FarZ; };
+    static FSavedCam Saved{};
+    bool toggledFollow = ImGui::Checkbox("View From Light (Camera)", &bViewFromSpot);
+    UViewportManager& VM2 = UViewportManager::GetInstance();
+    int32 active2 = VM2.GetActiveIndex();
+    auto& clients2 = VM2.GetClients();
+    UCamera* Cam2 = (active2 >= 0 && active2 < (int)clients2.size() && clients2[active2]) ? clients2[active2]->GetCamera() : nullptr;
+
+    if (toggledFollow)
+    {
+        if (bViewFromSpot && Cam2)
+        {
+            Saved.Has = true;
+            Saved.Type = Cam2->GetCameraType();
+            Saved.Loc  = Cam2->GetLocation();
+            Saved.Rot  = Cam2->GetRotation();
+            Saved.Fov  = Cam2->GetFovY();
+            Saved.NearZ= Cam2->GetNearZ();
+            Saved.FarZ = Cam2->GetFarZ();
+            GEditor->GetEditorModule()->SetGizmoVisible(false);
+        }
+        else if (!bViewFromSpot && Saved.Has && Cam2)
+        {
+            Cam2->SetCameraType(Saved.Type);
+            Cam2->SetLocation(Saved.Loc);
+            Cam2->SetRotation(Saved.Rot);
+            Cam2->SetFovY(Saved.Fov);
+            Cam2->SetNearZ(Saved.NearZ);
+            Cam2->SetFarZ(Saved.FarZ);
+            Saved.Has = false;
+            GEditor->GetEditorModule()->SetGizmoVisible(true);
+        }
+        bPrevViewFromSpot = bViewFromSpot;
+    }
+
+    // Failsafe: if override is off but we still have a saved camera and a valid camera appears, restore now
+    if (!bViewFromSpot && Saved.Has && Cam2)
+    {
+        Cam2->SetCameraType(Saved.Type);
+        Cam2->SetLocation(Saved.Loc);
+        Cam2->SetRotation(Saved.Rot);
+        Cam2->SetFovY(Saved.Fov);
+        Cam2->SetNearZ(Saved.NearZ);
+        Cam2->SetFarZ(Saved.FarZ);
+        Saved.Has = false;
+        GEditor->GetEditorModule()->SetGizmoVisible(true);
+    }
+
+    if (bViewFromSpot && Cam2)
+    {
+        // Derive yaw/pitch from the light's forward vector to avoid basis/euler mismatches
+        const FVector eye = SpotLightComponent->GetWorldLocation();
+        const FVector dir = SpotLightComponent->GetForwardVector().GetNormalized();
+        const float yawDeg = std::atan2f(dir.Y, dir.X) * ToDeg;
+        // Camera’s pitch sign is opposite of our derived world-space pitch; invert to avoid upside-down view
+        const float pitchDeg = -std::atan2f(dir.Z, std::sqrtf(dir.X * dir.X + dir.Y * dir.Y)) * ToDeg;
+
+        Cam2->SetCameraType(ECameraType::ECT_Perspective);
+        Cam2->SetLocation(eye);
+        Cam2->SetRotation(FVector(0.0f, pitchDeg, yawDeg));
+        const float fovDeg = SpotLightComponent->GetOuterConeAngle() * 2.0f * ToDeg;
+        Cam2->SetFovY(fovDeg);
+        Cam2->SetNearZ(0.05f);
+        Cam2->SetFarZ(std::max(SpotLightComponent->GetAttenuationRadius(), 10.0f));
     }
 
     // Shadow Map Preview

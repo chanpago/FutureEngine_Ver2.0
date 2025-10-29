@@ -5,6 +5,13 @@
 #include "Level/Public/Level.h"
 #include "Component/Public/ActorComponent.h"
 #include "ImGui/imgui.h"
+#include "Manager/UI/Public/ViewportManager.h"
+#include "Editor/Public/Camera.h"
+#include "Editor/Public/Editor.h"
+#include "Render/UI/Viewport/Public/ViewportClient.h"
+#include "Render/Renderer/Public/Renderer.h"
+#include "Render/Renderer/Public/RenderResourceFactory.h"
+#include "Render/RenderPass/Public/UpdateLightBufferPass.h"
 
 IMPLEMENT_CLASS(UPointLightComponentWidget, UWidget)
 
@@ -143,6 +150,191 @@ void UPointLightComponentWidget::RenderWidget()
     
     ImGui::PopStyleColor(3);
 
+    // Override camera with light's perspective (position only) + auto-restore
+    static bool bViewFromPoint = false;
+    static bool bPrevViewFromPoint = false;
+    struct FSavedCam { bool Has=false; ECameraType Type; FVector Loc; FVector Rot; float Fov; float NearZ; float FarZ; };
+    static FSavedCam Saved{};
+    bool toggled3 = ImGui::Checkbox("View From Light (Camera)", &bViewFromPoint);
+    UViewportManager& VM3 = UViewportManager::GetInstance();
+    int32 active3 = VM3.GetActiveIndex();
+    auto& clients3 = VM3.GetClients();
+    UCamera* Cam3 = (active3 >= 0 && active3 < (int)clients3.size() && clients3[active3]) ? clients3[active3]->GetCamera() : nullptr;
+
+    if (toggled3)
+    {
+        if (bViewFromPoint && Cam3)
+        {
+            Saved.Has = true;
+            Saved.Type = Cam3->GetCameraType();
+            Saved.Loc  = Cam3->GetLocation();
+            Saved.Rot  = Cam3->GetRotation();
+            Saved.Fov  = Cam3->GetFovY();
+            Saved.NearZ= Cam3->GetNearZ();
+            Saved.FarZ = Cam3->GetFarZ();
+            GEditor->GetEditorModule()->SetGizmoVisible(false);
+        }
+        else if (!bViewFromPoint && Saved.Has && Cam3)
+        {
+            Cam3->SetCameraType(Saved.Type);
+            Cam3->SetLocation(Saved.Loc);
+            Cam3->SetRotation(Saved.Rot);
+            Cam3->SetFovY(Saved.Fov);
+            Cam3->SetNearZ(Saved.NearZ);
+            Cam3->SetFarZ(Saved.FarZ);
+            Saved.Has = false;
+            GEditor->GetEditorModule()->SetGizmoVisible(true);
+        }
+        bPrevViewFromPoint = bViewFromPoint;
+    }
+
+    // Failsafe: if override is off but we still have a saved camera and a valid camera appears, restore now
+    if (!bViewFromPoint && Saved.Has && Cam3)
+    {
+        Cam3->SetCameraType(Saved.Type);
+        Cam3->SetLocation(Saved.Loc);
+        Cam3->SetRotation(Saved.Rot);
+        Cam3->SetFovY(Saved.Fov);
+        Cam3->SetNearZ(Saved.NearZ);
+        Cam3->SetFarZ(Saved.FarZ);
+        Saved.Has = false;
+        GEditor->GetEditorModule()->SetGizmoVisible(true);
+    }
+
+    if (bViewFromPoint && Cam3)
+    {
+        Cam3->SetCameraType(ECameraType::ECT_Perspective);
+        Cam3->SetLocation(PointLightComponent->GetWorldLocation());
+        Cam3->SetNearZ(0.05f);
+        Cam3->SetFarZ(std::max(PointLightComponent->GetAttenuationRadius(), 10.0f));
+    }
+
     ImGui::Separator();
+
+    // Shadow Map Preview (Point Light Cube)
+    if (ImGui::CollapsingHeader("Shadow Map View"))
+    {
+        auto& Renderer = URenderer::GetInstance();
+        auto* DeviceResources = Renderer.GetDeviceResources();
+        auto& Passes = Renderer.GetRenderPasses();
+        FUpdateLightBufferPass* LightPass = Passes.empty() ? nullptr : dynamic_cast<FUpdateLightBufferPass*>(Passes[0]);
+
+        if (!LightPass)
+        {
+            ImGui::TextColored(ImVec4(0.8f,0.5f,0.5f,1.0f), "Light buffer pass not found.");
+        }
+        else
+        {
+            uint32 CubeIdx = 0xFFFFFFFFu;
+            if (!LightPass->GetPointCubeIndexCPU(PointLightComponent, CubeIdx))
+            {
+                ImGui::Text("No shadow baked for this point light (not shadowed or out of budget).");
+            }
+            else
+            {
+                // Controls
+                static int Tile = 192; ImGui::SliderInt("Tile Size", &Tile, 64, 1024);
+                static int Gap  = 8;   ImGui::SliderInt("Gap", &Gap, 0, 64);
+                static float MinDepth = 0.0f; ImGui::SliderFloat("Min", &MinDepth, 0.0f, 0.99f, "%.2f");
+                static float MaxDepth = 1.0f; ImGui::SliderFloat("Max", &MaxDepth, 0.01f, 1.0f, "%.2f");
+                if (MinDepth > MaxDepth) MinDepth = MaxDepth;
+                static float Gamma = 1.2f; ImGui::SliderFloat("Gamma", &Gamma, 0.2f, 3.0f, "%.2f");
+                static bool Invert = false; ImGui::Checkbox("Invert", &Invert);
+
+                // Prepare preview resources (mosaic 3x2)
+                struct FDepthPreviewCB { float MinDepth; float MaxDepth; float Gamma; float Invert; };
+                struct FPreviewResources
+                {
+                    ID3D11Texture2D* Tex = nullptr; ID3D11RenderTargetView* RTV = nullptr; ID3D11ShaderResourceView* SRV = nullptr;
+                    ID3D11VertexShader* VS = nullptr; ID3D11PixelShader* PS = nullptr; ID3D11Buffer* CB = nullptr; ID3D11SamplerState* Sampler = nullptr;
+                    int W = 0, H = 0;
+                };
+                static FPreviewResources R;
+
+                auto Device = Renderer.GetDevice();
+                auto DC     = Renderer.GetDeviceContext();
+
+                const int Cols = 3, Rows = 2;
+                const int Width = Cols * Tile + (Cols - 1) * Gap;
+                const int Height = Rows * Tile + (Rows - 1) * Gap;
+
+                auto DestroyPreview = [&]() {
+                    SafeRelease(R.RTV); SafeRelease(R.SRV); SafeRelease(R.Tex);
+                    SafeRelease(R.VS);  SafeRelease(R.PS);  SafeRelease(R.CB);
+                    SafeRelease(R.Sampler);
+                    R.W = R.H = 0;
+                };
+
+                if (R.W != Width || R.H != Height)
+                {
+                    DestroyPreview();
+                    D3D11_TEXTURE2D_DESC desc = {}; desc.Width = Width; desc.Height = Height; desc.MipLevels = 1; desc.ArraySize = 1;
+                    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; desc.SampleDesc.Count = 1; desc.Usage = D3D11_USAGE_DEFAULT;
+                    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+                    if (SUCCEEDED(Device->CreateTexture2D(&desc, nullptr, &R.Tex)))
+                    { Device->CreateRenderTargetView(R.Tex, nullptr, &R.RTV); Device->CreateShaderResourceView(R.Tex, nullptr, &R.SRV); R.W = Width; R.H = Height; }
+                }
+
+                if (!R.VS || !R.PS)
+                { FRenderResourceFactory::CreateVertexShaderAndInputLayout(L"Asset/Shader/DepthPreview.hlsl", {}, &R.VS, nullptr, "DepthPreviewVS");
+                  FRenderResourceFactory::CreatePixelShader(L"Asset/Shader/DepthPreview.hlsl", &R.PS, "DepthPreviewPS"); }
+                if (!R.CB)
+                { R.CB = FRenderResourceFactory::CreateConstantBuffer<FDepthPreviewCB>(); }
+                if (!R.Sampler)
+                { R.Sampler = FRenderResourceFactory::CreateSamplerState(D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_TEXTURE_ADDRESS_CLAMP); }
+
+                if (R.RTV && R.VS && R.PS && R.CB && R.Sampler)
+                {
+                    FDepthPreviewCB cb = { MinDepth, MaxDepth, Gamma, Invert ? 1.0f : 0.0f };
+                    FRenderResourceFactory::UpdateConstantBufferData(R.CB, cb);
+
+                    float clear[4] = {0,0,0,1};
+                    // Save old targets and viewport
+                    ID3D11RenderTargetView* oldRTV = nullptr; ID3D11DepthStencilView* oldDSV = nullptr; DC->OMGetRenderTargets(1, &oldRTV, &oldDSV);
+                    UINT oldVPCount = 1; D3D11_VIEWPORT oldVP{}; DC->RSGetViewports(&oldVPCount, &oldVP);
+
+                    // Set destination RT & clear
+                    DC->OMSetRenderTargets(1, &R.RTV, nullptr);
+                    DC->ClearRenderTargetView(R.RTV, clear);
+                    DC->IASetInputLayout(nullptr);
+                    DC->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                    DC->VSSetShader(R.VS, nullptr, 0);
+                    DC->PSSetShader(R.PS, nullptr, 0);
+                    DC->PSSetSamplers(0, 1, &R.Sampler);
+                    DC->PSSetConstantBuffers(0, 1, &R.CB);
+
+                    // Render 6 faces into a 3x2 mosaic
+                    for (int face = 0; face < 6; ++face)
+                    {
+                        ID3D11ShaderResourceView* FaceSRV = nullptr;
+                        if (!DeviceResources->CreatePointShadowFaceSRV(CubeIdx, (UINT)face, &FaceSRV) || !FaceSRV)
+                            continue;
+
+                        const int cx = face % Cols;
+                        const int cy = face / Cols;
+                        const float x0 = (float)(cx * (Tile + Gap));
+                        const float y0 = (float)(cy * (Tile + Gap));
+                        D3D11_VIEWPORT vpTile = { x0, y0, (float)Tile, (float)Tile, 0.0f, 1.0f };
+                        DC->RSSetViewports(1, &vpTile);
+
+                        DC->PSSetShaderResources(0, 1, &FaceSRV);
+                        DC->Draw(3, 0);
+                        ID3D11ShaderResourceView* nullSRV[1] = { nullptr }; DC->PSSetShaderResources(0, 1, nullSRV);
+                        SafeRelease(FaceSRV);
+                    }
+
+                    // Restore old targets and viewport
+                    DC->OMSetRenderTargets(1, &oldRTV, oldDSV);
+                    DC->RSSetViewports(oldVPCount, &oldVP);
+                    SafeRelease(oldRTV); SafeRelease(oldDSV);
+                }
+
+                // Show the processed mosaic preview
+                ImGui::Image((ImTextureID)R.SRV, ImVec2((float)R.W, (float)R.H));
+                ImGui::Text("Cube %u (faces 0..5)", CubeIdx);
+            }
+        }
+    }
+
 }
 

@@ -2,7 +2,7 @@
 // Shadow Map 생성을 위한 Vertex/Pixel Shader
 // Light의 관점에서 장면을 렌더링하여 깊이 정보를 저장합니다.
 
-#define MAX_CASCADES 4
+#define MAX_CASCADES 8
 
 // Constant Buffers
 cbuffer Model : register(b0)

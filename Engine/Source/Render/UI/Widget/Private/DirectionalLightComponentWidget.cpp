@@ -5,6 +5,10 @@
 #include "Level/Public/Level.h"
 #include "Component/Public/ActorComponent.h"
 #include "Render/Renderer/Public/Renderer.h"
+#include "Manager/UI/Public/ViewportManager.h"
+#include "Editor/Public/Camera.h"
+#include "Manager/UI/Public/ViewportManager.h"
+#include "Render/UI/Viewport/Public/ViewportClient.h"
 #include "ImGui/imgui.h"
 
 IMPLEMENT_CLASS(UDirectionalLightComponentWidget, UWidget)
@@ -125,6 +129,71 @@ void UDirectionalLightComponentWidget::RenderWidget()
     
     ImGui::PopStyleColor(3);
 
+    // Override camera with light's perspective (orientation only) + auto-restore
+    static bool bViewFromLight = false;
+    static bool bPrevViewFromLight = false;
+    struct FSavedCam { bool Has=false; ECameraType Type; FVector Loc; FVector Rot; float Fov; float NearZ; float FarZ; };
+    static FSavedCam Saved{};
+    bool toggled = ImGui::Checkbox("View From Light (Camera)", &bViewFromLight);
+    UViewportManager& VM = UViewportManager::GetInstance();
+    int32 active = VM.GetActiveIndex();
+    auto& clients = VM.GetClients();
+    UCamera* Cam = (active >= 0 && active < (int)clients.size() && clients[active]) ? clients[active]->GetCamera() : nullptr;
+
+    if (toggled)
+    {
+        if (bViewFromLight && Cam)
+        {
+            // Save state on enable
+            Saved.Has = true;
+            Saved.Type = Cam->GetCameraType();
+            Saved.Loc  = Cam->GetLocation();
+            Saved.Rot  = Cam->GetRotation();
+            Saved.Fov  = Cam->GetFovY();
+            Saved.NearZ= Cam->GetNearZ();
+            Saved.FarZ = Cam->GetFarZ();
+            // Hide transform gizmo while in light POV
+            GEditor->GetEditorModule()->SetGizmoVisible(false);
+        }
+        else if (!bViewFromLight && Saved.Has && Cam)
+        {
+            // Restore on disable
+            Cam->SetCameraType(Saved.Type);
+            Cam->SetLocation(Saved.Loc);
+            Cam->SetRotation(Saved.Rot);
+            Cam->SetFovY(Saved.Fov);
+            Cam->SetNearZ(Saved.NearZ);
+            Cam->SetFarZ(Saved.FarZ);
+            Saved.Has = false;
+            // Show gizmo again
+            GEditor->GetEditorModule()->SetGizmoVisible(true);
+        }
+        bPrevViewFromLight = bViewFromLight;
+    }
+
+    // Failsafe: if override is off but we still have a saved camera and a valid camera appears, restore now
+    if (!bViewFromLight && Saved.Has && Cam)
+    {
+        Cam->SetCameraType(Saved.Type);
+        Cam->SetLocation(Saved.Loc);
+        Cam->SetRotation(Saved.Rot);
+        Cam->SetFovY(Saved.Fov);
+        Cam->SetNearZ(Saved.NearZ);
+        Cam->SetFarZ(Saved.FarZ);
+        Saved.Has = false;
+        GEditor->GetEditorModule()->SetGizmoVisible(true);
+    }
+
+    if (bViewFromLight && Cam)
+    {
+        // Follow light orientation every frame
+        FVector dir = DirectionalLightComponent->GetForwardVector().GetNormalized();
+        const float yawDeg = std::atan2f(dir.Y, dir.X) * ToDeg;
+        const float pitchDeg = std::atan2f(dir.Z, std::sqrtf(dir.X * dir.X + dir.Y * dir.Y)) * ToDeg;
+        Cam->SetCameraType(ECameraType::ECT_Perspective);
+        Cam->SetRotation(FVector(0.0f, pitchDeg, yawDeg));
+    }
+
     // Shadow Map Preview
     if (ImGui::CollapsingHeader("Shadow Map Preview"))
     {
@@ -141,7 +210,24 @@ void UDirectionalLightComponentWidget::RenderWidget()
         {
             ImGui::TextColored(ImVec4(0.8f,0.5f,0.5f,1.0f), "Shadow map SRV not available.");
         }
+
+        ImGui::SeparatorText("Cascaded Shadow Maps");
+        static int cascadePreviewIndex = 0;
+        int numActiveCascades = 8;
+        ImGui::SliderInt("Preview Index", &cascadePreviewIndex, 0, numActiveCascades - 1);
+        
+        ID3D11ShaderResourceView* cascadeSRV = URenderer::GetInstance().GetDeviceResources()->GetCascadedShadowMapSliceSRV(cascadePreviewIndex);
+        if (cascadeSRV)
+        {
+            ImGui::Image((ImTextureID)cascadeSRV, ImVec2(256, 256));
+            ImGui::Text("Resolution: 2048 x 2048 (Depth)");
+        }
+        else
+        {
+            ImGui::Text("Cascade SRV not available for index %d.", cascadePreviewIndex);
+        }
     }
+
 
     ImGui::Separator();
 }

@@ -27,6 +27,7 @@ void UDeviceResources::Create(HWND InWindowHandle)
     CreateSpotShadowMapResources();
     CreatePointShadowCubeResources();
     CreateCascadedShadowMap();
+	CreateGizmoDepthBuffer();
     CreateFactories();
 }
 
@@ -41,6 +42,7 @@ void UDeviceResources::Release()
     ReleaseFrameBuffer();
     ReleaseNormalBuffer();
 	ReleaseDepthBuffer();
+	ReleaseGizmoDepthBuffer();
 	ReleaseDeviceAndSwapChain();
 }
 
@@ -359,11 +361,59 @@ void UDeviceResources::ReleaseDepthBuffer()
 	}
 }
 
+void UDeviceResources::CreateGizmoDepthBuffer()
+{
+	ReleaseGizmoDepthBuffer(); // Ensure previous resources are released
+
+	D3D11_TEXTURE2D_DESC depthTexDesc = {};
+	depthTexDesc.Width = Width;
+	depthTexDesc.Height = Height;
+	depthTexDesc.MipLevels = 1;
+	depthTexDesc.ArraySize = 1;
+	depthTexDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthTexDesc.SampleDesc.Count = 1;
+	depthTexDesc.Usage = D3D11_USAGE_DEFAULT;
+	depthTexDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	HRESULT hr = Device->CreateTexture2D(&depthTexDesc, nullptr, &GizmoDepthTexture);
+	assert(SUCCEEDED(hr) && "Failed to create Gizmo Depth Texture!");
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Texture2D.MipSlice = 0;
+	hr = Device->CreateDepthStencilView(GizmoDepthTexture, &dsvDesc, &GizmoDSV);
+	assert(SUCCEEDED(hr) && "Failed to create Gizmo DSV!");
+}
+
+void UDeviceResources::ReleaseGizmoDepthBuffer()
+{
+	SafeRelease(GizmoDSV);
+	SafeRelease(GizmoDepthTexture);
+}
+
+ID3D11ShaderResourceView* UDeviceResources::GetCascadedShadowMapSliceSRV(int CascadeIndex) const
+{
+	if (CascadeIndex >= 0 && CascadeIndex < MAX_CASCADES)
+	{
+		return CascadedShadowMapSliceSRVs[CascadeIndex];
+	}
+	return nullptr;
+}
+
 ID3D11DepthStencilView* UDeviceResources::GetCascadedShadowMapDSV(int CascadeIndex) const
 {
 	if (CascadeIndex >= 0 && CascadeIndex < MAX_CASCADES)
 	{
 		return CascadedShadowMapDSVs[CascadeIndex];
+	}
+	return nullptr;
+}
+
+ID3D11RenderTargetView* UDeviceResources::GetCascadedShadowMapColorRTV(int CascadeIndex) const
+{
+	if (CascadeIndex >= 0 && CascadeIndex < MAX_CASCADES)
+	{
+		return CascadedShadowMapColorRTVs[CascadeIndex];
 	}
 	return nullptr;
 }
@@ -432,6 +482,60 @@ void UDeviceResources::CreateCascadedShadowMap()
 		hr = Device->CreateDepthStencilView(CascadedShadowMapTexture, &dsvDesc, &CascadedShadowMapDSVs[i]);
 		if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM DSV for slice %d", i); }
 	}
+
+	// Color Texture2DArray for VSM (moments)
+	D3D11_TEXTURE2D_DESC ColorDesc = {};
+	ColorDesc.Width = 2048;
+	ColorDesc.Height = 2048;
+	ColorDesc.MipLevels = 0; // generate full mip chain
+	ColorDesc.ArraySize = MAX_CASCADES;
+	ColorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;	// moments (m1, m2)
+	ColorDesc.SampleDesc.Count = 1;
+	ColorDesc.Usage = D3D11_USAGE_DEFAULT;
+	ColorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+	ColorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+
+	hr = Device->CreateTexture2D(&ColorDesc, nullptr, &CascadedShadowMapColorTexture);
+	if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM ColorArray"); return; }
+
+	// RTVs per slice
+	for (int i = 0; i < MAX_CASCADES; i++)
+	{
+		D3D11_RENDER_TARGET_VIEW_DESC RTVDesc = {};
+		RTVDesc.Format = ColorDesc.Format;
+		RTVDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+		RTVDesc.Texture2DArray.MipSlice = 0;
+		RTVDesc.Texture2DArray.FirstArraySlice = i;
+		RTVDesc.Texture2DArray.ArraySize = 1;
+
+		hr = Device->CreateRenderTargetView(CascadedShadowMapColorTexture, &RTVDesc, &CascadedShadowMapColorRTVs[i]);
+		if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM Color RTV for slice %d", i); }
+	}
+
+	// SRV (total moments array)
+	D3D11_SHADER_RESOURCE_VIEW_DESC ColorSRVDesc = {};
+	ColorSRVDesc.Format = ColorDesc.Format;
+	ColorSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+	ColorSRVDesc.Texture2DArray.MostDetailedMip = 0;
+	ColorSRVDesc.Texture2DArray.MipLevels = -1;
+	ColorSRVDesc.Texture2DArray.FirstArraySlice = 0;
+	ColorSRVDesc.Texture2DArray.ArraySize = MAX_CASCADES;
+
+	hr = Device->CreateShaderResourceView(CascadedShadowMapColorTexture, &ColorSRVDesc, &CascadedShadowMapColorSRV);
+	if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM Color SRV"); return; }
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC sliceSrvDesc = {};
+	sliceSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	sliceSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+	sliceSrvDesc.Texture2DArray.MostDetailedMip = 0;
+	sliceSrvDesc.Texture2DArray.MipLevels = 1;
+	sliceSrvDesc.Texture2DArray.ArraySize = 1;
+	for (int i = 0; i < MAX_CASCADES; i++)
+	{
+		sliceSrvDesc.Texture2DArray.FirstArraySlice = i; 
+		hr = Device->CreateShaderResourceView(CascadedShadowMapTexture, &sliceSrvDesc, &CascadedShadowMapSliceSRVs[i]);
+		if (FAILED(hr)) { UE_LOG_ERROR("Failed to create CSM Slice SRV for slice %d", i); }
+	}
 }
 
 void UDeviceResources::ReleaseCascadedShadowMap()
@@ -439,9 +543,13 @@ void UDeviceResources::ReleaseCascadedShadowMap()
 	for (int i = 0; i < MAX_CASCADES; i++)
 	{
 		SafeRelease(CascadedShadowMapDSVs[i]);
+		SafeRelease(CascadedShadowMapColorRTVs[i]);
+		SafeRelease(CascadedShadowMapSliceSRVs[i]);
 	}
 	SafeRelease(CascadedShadowMapSRV);
+	SafeRelease(CascadedShadowMapColorSRV);
 	SafeRelease(CascadedShadowMapTexture);
+	SafeRelease(CascadedShadowMapColorTexture);
 }
 
 void UDeviceResources::CreateFactories()
@@ -751,6 +859,21 @@ void UDeviceResources::CreatePointShadowCubeResources()
         return;
     }
 
+    // SRV as Texture2DArray (for PCF sampling via SampleCmp)
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv2D = {};
+    srv2D.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    srv2D.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    srv2D.Texture2DArray.MostDetailedMip = 0;
+    srv2D.Texture2DArray.MipLevels = 1;
+    srv2D.Texture2DArray.FirstArraySlice = 0;
+    srv2D.Texture2DArray.ArraySize = ArraySize;
+    hr = Device->CreateShaderResourceView(PointShadowCubeTexture, &srv2D, &PointShadow2DArraySRV);
+    if (FAILED(hr))
+    {
+        UE_LOG_ERROR("Failed to create Point Shadow 2DArray SRV");
+        // Not fatal; PCF path for point lights will be disabled
+    }
+
     // Create a DSV for each face slice
     for (UINT slice = 0; slice < ArraySize; ++slice)
     {
@@ -769,11 +892,69 @@ void UDeviceResources::CreatePointShadowCubeResources()
         }
         ++PointShadowCubeDSVsCount;
     }
+
+    // Create VSM color moments texture (R32G32_FLOAT), array, RTV per slice, SRV as Texture2DArray
+    {
+        D3D11_TEXTURE2D_DESC colorDesc = {};
+        colorDesc.Width = FaceSize;
+        colorDesc.Height = FaceSize;
+        colorDesc.MipLevels = 0; // allow full mip chain
+        colorDesc.ArraySize = ArraySize;
+        colorDesc.Format = DXGI_FORMAT_R32G32_FLOAT;
+        colorDesc.SampleDesc.Count = 1;
+        colorDesc.Usage = D3D11_USAGE_DEFAULT;
+        colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        colorDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+        hr = Device->CreateTexture2D(&colorDesc, nullptr, &PointShadowColorTexture);
+        if (FAILED(hr))
+        {
+            UE_LOG_ERROR("Failed to create Point Shadow Moments Texture");
+            // Not fatal for non-VSM paths
+        }
+        if (SUCCEEDED(hr))
+        {
+            for (UINT slice = 0; slice < ArraySize; ++slice)
+            {
+                D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+                rtvDesc.Format = colorDesc.Format;
+                rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+                rtvDesc.Texture2DArray.MipSlice = 0;
+                rtvDesc.Texture2DArray.FirstArraySlice = slice;
+                rtvDesc.Texture2DArray.ArraySize = 1;
+                HRESULT hrRTV = Device->CreateRenderTargetView(PointShadowColorTexture, &rtvDesc, &PointShadowColorRTVs[slice]);
+                if (FAILED(hrRTV))
+                {
+                    UE_LOG_ERROR("Failed to create Point Shadow Moments RTV");
+                    // Continue to try others
+                }
+            }
+
+            D3D11_SHADER_RESOURCE_VIEW_DESC srvDescC = {};
+            srvDescC.Format = colorDesc.Format;
+            srvDescC.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+            srvDescC.Texture2DArray.MostDetailedMip = 0;
+            srvDescC.Texture2DArray.MipLevels = -1; // all mips
+            srvDescC.Texture2DArray.FirstArraySlice = 0;
+            srvDescC.Texture2DArray.ArraySize = ArraySize;
+            HRESULT hrSRV = Device->CreateShaderResourceView(PointShadowColorTexture, &srvDescC, &PointShadowColorSRV);
+            if (FAILED(hrSRV))
+            {
+                UE_LOG_ERROR("Failed to create Point Shadow Moments SRV");
+            }
+        }
+    }
 }
 
 void UDeviceResources::ReleasePointShadowCubeResources()
 {
     SafeRelease(PointShadowCubeSRV);
+    SafeRelease(PointShadow2DArraySRV);
+    SafeRelease(PointShadowColorSRV);
+    for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
+    {
+        SafeRelease(PointShadowColorRTVs[i]);
+        PointShadowColorRTVs[i] = nullptr;
+    }
     for (UINT i = 0; i < PointShadowCubeDSVsCount; ++i)
     {
         SafeRelease(PointShadowCubeDSVs[i]);
@@ -781,6 +962,22 @@ void UDeviceResources::ReleasePointShadowCubeResources()
     }
     PointShadowCubeDSVsCount = 0;
     SafeRelease(PointShadowCubeTexture);
+    SafeRelease(PointShadowColorTexture);
+}
+
+bool UDeviceResources::CreatePointShadowFaceSRV(UINT CubeIndex, UINT FaceIndex, ID3D11ShaderResourceView** OutSRV) const
+{
+    if (!PointShadowCubeTexture || !OutSRV) return false;
+    const UINT slice = CubeIndex * 6 + (FaceIndex % 6);
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    srvDesc.Texture2DArray.MostDetailedMip = 0;
+    srvDesc.Texture2DArray.MipLevels = 1;
+    srvDesc.Texture2DArray.FirstArraySlice = slice;
+    srvDesc.Texture2DArray.ArraySize = 1;
+    HRESULT hr = Device->CreateShaderResourceView(PointShadowCubeTexture, &srvDesc, OutSRV);
+    return SUCCEEDED(hr);
 }
 
 /**

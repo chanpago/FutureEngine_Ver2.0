@@ -87,7 +87,13 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		}
 		case EShadowProjectionType::CSM:
 		{
-			ShadowConsts = LightBufferPass->GetCascadedShadowMapConstants();
+			const auto& CSMData = LightBufferPass->GetCascadedShadowMapConstants();
+			for (int i = 0; i < MAX_CASCADES; ++i)
+			{
+				ShadowConsts.LightViewP[i] = CSMData.LightViewP[i];
+				ShadowConsts.LightProjP[i] = CSMData.LightProjP[i];
+			}
+			ShadowConsts.CascadeSplits = CSMData.CascadeSplits;
 			ShadowConsts.bUseCSM = 1.0f;
 			break;
 		}
@@ -98,7 +104,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		if (ProjectionType == EShadowProjectionType::CSM)
 		{
 			ShadowMapSRV = ShadowConsts.bUseVSM
-				? nullptr /* Renderer.GetDeviceResources()->GetCascadedShadowMapColorSRV() */
+				? Renderer.GetDeviceResources()->GetCascadedShadowMapColorSRV()
 				: Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
 		}
 		else  // LVP or PSM
@@ -107,30 +113,6 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
 				: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
 		}
-
-		//if (bUseCSM)
-		//{
-		//	//// Get pre-computed CSM constants from LightBufferPass
-		//	//ShadowConsts = LightBufferPass->GetCascadedShadowMapConstants();
-		//	//// Specify the use of CSM
-		//	//ShadowConsts.bUseCSM = 1.0f;
-
-		//	//if (bUseVSM)
-		//	//{
-		//	//	// CSM + VSM
-		//	//	ShadowConsts.bUseVSM = 1.0f;
-		//	//	ShadowConsts.ShadowParams.X = 0.0015f;  // VSM needs less bias
-		//	//	// TODO: needs Texture2DArray resource of VSM format (color)
-		//	//	// bShouldBindShadows = false;        // Temporarily disabled
-		//	//}
-		//	//else
-		//	//{
-		//	//	// Only CSM
-		//	//	ShadowConsts.bUseVSM = 0.0f;
-		//	//	ShadowConsts.ShadowParams.X = 0.005f;  // VSM needs less bias
-		//	//	ShadowMapSRV = Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
-		//	//}
-		//}
 
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{
@@ -230,9 +212,10 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 	// Bind point shadow resources regardless of directional/spot availability
 	{
 		FUpdateLightBufferPass* LightBufferPass = dynamic_cast<FUpdateLightBufferPass*>(Renderer.GetRenderPasses()[0]);
-		ID3D11ShaderResourceView* CubeSRV = Renderer.GetDeviceResources()->GetPointShadowCubeSRV();
-		Pipeline->SetShaderResourceView(14, EShaderType::PS, CubeSRV);
+		Pipeline->SetShaderResourceView(14, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadowCubeSRV());
 		Pipeline->SetShaderResourceView(15, EShaderType::PS, LightBufferPass ? LightBufferPass->GetPointShadowCubeIndexSRV() : nullptr);
+		Pipeline->SetShaderResourceView(16, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadow2DArraySRV());
+		Pipeline->SetShaderResourceView(17, EShaderType::PS, Renderer.GetDeviceResources()->GetPointShadowColorSRV());
 	}
 
 	const auto& DeviceResources = Renderer.GetDeviceResources();
