@@ -365,19 +365,71 @@ inline float ShadowPCF2D(Texture2D DepthTex, SamplerComparisonState Comp, float2
 }
 
 // 2D VSM from moments texture
+// Sample moments with an inline Gaussian blur (5x5) around uv.
+inline float2 SampleGaussianMoments2D(Texture2D MomentsTex, SamplerState Samp, float2 uv)
+{
+    uint w, h; MomentsTex.GetDimensions(w, h);
+    float2 texel = 1.0 / float2(max(1u,w), max(1u,h));
+
+    // 1D Gaussian weights (sigma ~= 1.0), normalized
+    // [0]=2, [1]=1, [2]=0 distance indices
+    const float w2 = 0.06136;
+    const float w1 = 0.24477;
+    const float w0 = 0.38774;
+
+    float2 sum = float2(0.0f, 0.0f);
+    
+    [unroll] for (int dy = -2; dy <= 2; ++dy)
+    {
+        float wy = (dy == 0) ? w0 : ((abs(dy) == 1) ? w1 : w2);
+        [unroll] for (int dx = -2; dx <= 2; ++dx)
+        {
+            float wx = (dx == 0) ? w0 : ((abs(dx) == 1) ? w1 : w2);
+            float2 o = float2(dx, dy) * texel;
+            float2 m = MomentsTex.SampleLevel(Samp, uv + o, 0.0).rg;
+            sum += (wx * wy) * m;
+        }
+    }
+    return sum;
+}
+
 inline float ShadowVSM2D(Texture2D MomentsTex, SamplerState Samp, float2 uv, float currentDepth, float mipBias, float Sharpen)
 {
-    float2 mom = MomentsTex.SampleBias(Samp, uv, mipBias).rg;
-    return CalculateVSM(mom, currentDepth, mipBias, Sharpen);
+    // Apply spatial Gaussian blur at sampling time; ignore mip bias here to avoid double-softening.
+    float2 mom = SampleGaussianMoments2D(MomentsTex, Samp, uv);
+    return CalculateVSM(mom, currentDepth, 0.0f, Sharpen);
 }
 
 // 2D array VSM (e.g., cascades)
+// Gaussian blur sampling for 2D array texture (samples within same layer)
+inline float2 SampleGaussianMoments2DArray(Texture2DArray MomentsTex, SamplerState Samp, float3 uvLayer)
+{
+    uint w, h, layers; MomentsTex.GetDimensions(w, h, layers);
+    float2 texel = 1.0 / float2(max(1u,w), max(1u,h));
+
+    const float w2 = 0.06136;
+    const float w1 = 0.24477;
+    const float w0 = 0.38774;
+
+    float2 sum = float2(0.0f, 0.0f);
+    [unroll] for (int dy = -2; dy <= 2; ++dy)
+    {
+        float wy = (dy == 0) ? w0 : ((abs(dy) == 1) ? w1 : w2);
+        [unroll] for (int dx = -2; dx <= 2; ++dx)
+        {
+            float wx = (dx == 0) ? w0 : ((abs(dx) == 1) ? w1 : w2);
+            float2 o = float2(dx, dy) * texel;
+            float2 m = MomentsTex.SampleLevel(Samp, float3(uvLayer.xy + o, uvLayer.z), 0.0).rg;
+            sum += (wx * wy) * m;
+        }
+    }
+    return sum;
+}
+
 inline float ShadowVSM2DArray(Texture2DArray MomentsTex, SamplerState Samp, float3 uvLayer, float currentDepth, float mipBias, float Sharpen)
 {
-    // Prefer clamp sampling and explicit LOD for stability across cascades
-    static const float VSM_LOD = 1.0f; // tweakable softness via lower-res moments
-    float2 mom = MomentsTex.SampleLevel(Samp, uvLayer, VSM_LOD).rg;
-    return CalculateVSM(mom, currentDepth, mipBias, Sharpen);
+    float2 mom = SampleGaussianMoments2DArray(MomentsTex, Samp, uvLayer);
+    return CalculateVSM(mom, currentDepth, 0.0f, Sharpen);
 }
 
 // 2D array PCF (3x3)
