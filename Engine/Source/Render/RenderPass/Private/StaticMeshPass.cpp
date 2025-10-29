@@ -205,6 +205,15 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
 		}
 	}
+	else
+	{
+		FShadowMapConstants ShadowFlags = {};
+		FRenderResourceFactory::UpdateConstantBufferData(ConstantBufferShadowMap, ShadowFlags);
+		Pipeline->SetConstantBuffer(6, EShaderType::PS, ConstantBufferShadowMap);
+
+		Pipeline->SetShaderResourceView(10, EShaderType::PS, nullptr);
+		Pipeline->SetShaderResourceView(11, EShaderType::PS, nullptr);
+	}
 
 	// Bind spotlight shadow resources independently of directional light presence
 	if (Context.ShowFlags & EEngineShowFlags::SF_Shadow)
@@ -258,6 +267,11 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
             Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
             Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
         }
+	}
+	else
+	{
+		Pipeline->SetShaderResourceView(12, EShaderType::PS, nullptr);
+		Pipeline->SetShaderResourceView(13, EShaderType::PS, nullptr);
 	}
 
 	/**
