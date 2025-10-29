@@ -480,6 +480,23 @@ void UMainBarWidget::RenderShowFlagsMenu()
 			CurrentLevel->SetShowFlags(ShowFlags);
 		}
 
+		// 그림자 표시 옵션
+		bool bEnableShadow = (ShowFlags & EEngineShowFlags::SF_Shadow) != 0;
+		if (ImGui::MenuItem("그림자 적용", nullptr, bEnableShadow))
+		{
+			if (bEnableShadow)
+			{
+				ShowFlags &= ~static_cast<uint64>(EEngineShowFlags::SF_Shadow);
+				UE_LOG("MainBarWidget: 그림자 비활성화");
+			}
+			else
+			{
+				ShowFlags |= static_cast<uint64>(EEngineShowFlags::SF_Shadow);
+				UE_LOG("MainBarWidget: 그림자 활성화");
+			}
+			CurrentLevel->SetShowFlags(ShowFlags);
+		}
+
 		// Projection Type
 		if (ImGui::BeginMenu("투영 방식"))
 		{
