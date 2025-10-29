@@ -125,6 +125,16 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
         }
     }
 
+    // Generate mips for cascaded VSM moments after all cascades are rendered
+    if (ProjectionType == EShadowProjectionType::CSM && FilterType == EShadowFilterType::VSM)
+    {
+        ID3D11ShaderResourceView* srv = URenderer::GetInstance().GetDeviceResources()->GetCascadedShadowMapColorSRV();
+        if (srv)
+        {
+            DeviceContext->GenerateMips(srv);
+        }
+    }
+
     // +-+-+ CLEANUP: RESTORE RESOURCES AND VIEWPORT +-+-+
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
