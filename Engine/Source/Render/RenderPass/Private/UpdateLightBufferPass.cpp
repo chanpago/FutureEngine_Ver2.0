@@ -66,6 +66,24 @@ void FUpdateLightBufferPass::Execute(FRenderingContext& Context)
 {
     // Context에 이미 수집된 Light 컴포넌트들을 사용
     // Shadow Map 베이킹 실행
+    // If shadows are globally disabled, ensure point light shadows don't persist
+    if (!(Context.ShowFlags & EEngineShowFlags::SF_Shadow))
+    {
+        // Invalidate point shadow tier mappings so shaders treat all point lights as unshadowed
+        if (PointShadowCubeIndexStructuredBuffer)
+        {
+            TArray<FPointShadowTierMapping> TierMapping;
+            TierMapping.resize(Context.PointLights.size());
+            for (size_t i = 0; i < TierMapping.size(); ++i)
+            {
+                TierMapping[i].Tier = 0xFFFFFFFFu;
+                TierMapping[i].TierLocalIndex = 0xFFFFFFFFu;
+            }
+            FRenderResourceFactory::UpdateStructuredBuffer(PointShadowCubeIndexStructuredBuffer, TierMapping);
+        }
+        return;
+    }
+
     //BakeShadowMap(Context);
     NewBakeShadowMap(Context);
     BakeSpotShadowMap(Context);
