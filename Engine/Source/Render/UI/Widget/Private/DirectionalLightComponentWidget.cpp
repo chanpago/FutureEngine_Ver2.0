@@ -127,36 +127,6 @@ void UDirectionalLightComponentWidget::RenderWidget()
         ImGui::SetTooltip("디렉셔널 라이트 밝기\n범위: 0.0(꺼짐) ~ 20.0(최대)");
     }
 
-    // Shadow parameters
-    float depthBias = DirectionalLightComponent->GetBias();
-    if (ImGui::DragFloat("Shadow Bias", &depthBias, 0.0001f, 0.0f, 0.02f, "%.5f"))
-    {
-        DirectionalLightComponent->SetBias(depthBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 깊이 바이어스(아크네 방지)\n작을수록 정확하지만 아크네가 생길 수 있습니다.");
-    }
-
-    float slopeBias = DirectionalLightComponent->GetSlopeBias();
-    if (ImGui::DragFloat("Slope Bias", &slopeBias, 0.0005f, 0.0f, 0.2f, "%.5f"))
-    {
-        DirectionalLightComponent->SetSlopeBias(slopeBias);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("경사(법선) 기반 추가 바이어스\n사선 표면의 셀프 섀도잉을 줄입니다.");
-    }
-
-    float sharpen = DirectionalLightComponent->GetSharpen();
-    if (ImGui::DragFloat("Sharpen", &sharpen, 0.05f, 0.0f, 3.0f, "%.2f"))
-    {
-        DirectionalLightComponent->SetSharpen(sharpen);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("그림자 경계 선명도\n값이 크면 경계가 더 또렷해집니다.");
-    }
     
     ImGui::PopStyleColor(3);
 
@@ -293,7 +263,7 @@ void UDirectionalLightComponentWidget::RenderWidget()
 
         // Shadow Slope Bias
         float ShadowSlopeBias = DirectionalLightComponent->GetShadowSlopeBias();
-        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 10.0f, "%.2f"))
+        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 0.2f, "%.2f"))
         {
             DirectionalLightComponent->SetShadowSlopeBias(ShadowSlopeBias);
         }

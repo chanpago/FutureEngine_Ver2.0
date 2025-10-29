@@ -67,24 +67,11 @@ public:
     bool GetCastShadows() const { return bCastShadows;}
     void SetCastShadows(bool InbCastShasows){bCastShadows = InbCastShasows;}
 
-    // Shadow parameters
-    float GetBias() const { return Bias; }
-    void SetBias(float InBias) { Bias = std::max(0.0f, InBias); }
-
-    float GetSlopeBias() const { return SlopeBias; }
-    void SetSlopeBias(float InSlopeBias) { SlopeBias = std::max(0.0f, InSlopeBias); }
-
-    float GetSharpen() const { return Sharpen; }
-    void SetSharpen(float InSharpen) { Sharpen = std::max(0.0f, InSharpen); }
-
     
 protected:
     /** Total energy that the light emits. */
     float Intensity = 1.0f;
-    float ResolutionScale = 1.0f;
-    float Bias = 0.0008f;
-    float SlopeBias = 0.0008f;
-    float Sharpen = 1.0f;
+
 
     /**
      * Filter color of the light.

@@ -154,5 +154,5 @@ void UDirectionalLightComponent::RenderLightDirectionGizmo(UCamera* InCamera)
 FDirectionalLightInfo UDirectionalLightComponent::GetDirectionalLightInfo() const
 {
     return FDirectionalLightInfo{ FVector4(LightColor, 1), GetForwardVector(), Intensity,
-        ResolutionScale, Bias, SlopeBias, Sharpen };
+        ShadowResolutionScale, ShadowBias, ShadowSlopeBias, ShadowSharpen };
 }

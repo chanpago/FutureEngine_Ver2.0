@@ -57,7 +57,7 @@
           "Location" : [0.000000, 0.000000, 0.000000],
           "Name" : "UBillBoardComponent_0",
           "ParentName" : "UDirectionalLightComponent_0",
-          "Rotation" : [-56.566013, 58.733944, -149.260437],
+          "Rotation" : [-56.565998, 58.733944, -149.260437],
           "Scale" : [2.000000, 2.000000, 2.000000],
           "Type" : "UBillBoardComponent",
           "bVisible" : "false"
@@ -110,7 +110,7 @@
           "Location" : [0.000000, 0.000000, 0.000000],
           "Name" : "UBillBoardComponent_1",
           "ParentName" : "USpotLightComponent_0",
-          "Rotation" : [-75.884872, 37.595253, 0.024214],
+          "Rotation" : [-89.213882, 76.999786, 0.087930],
           "Scale" : [2.000000, 2.000000, 2.000000],
           "Type" : "UBillBoardComponent",
           "bVisible" : "true"
@@ -223,7 +223,7 @@
           "Location" : [0.000000, 0.000000, 0.000000],
           "Name" : "UBillBoardComponent_3",
           "ParentName" : "USpotLightComponent_1",
-          "Rotation" : [-57.303497, 24.061985, 35.200695],
+          "Rotation" : [-22.953661, 54.776150, 70.196739],
           "Scale" : [2.000000, 2.000000, 2.000000],
           "Type" : "UBillBoardComponent",
           "bVisible" : "true"
@@ -245,7 +245,7 @@
       "bCanEverTick" : "false",
       "bTickInEditor" : "false"
     },
-    "273" : {
+    "230" : {
       "Components" : [{
           "AngleFalloffExponent" : 2.000000,
           "AttenuationAngle" : 0.785398,
@@ -258,7 +258,7 @@
           "Location" : [-1.199914, -16.833935, 11.224058],
           "Name" : "USpotLightComponent_2",
           "ParentName" : "",
-          "Rotation" : [74.763016, -19.887781, -79.787453],
+          "Rotation" : [74.763008, -19.887779, -79.787453],
           "Scale" : [1.000000, 1.000000, 1.000000],
           "ShadowBias" : 0.001000,
           "ShadowResolutionScale" : 2.000000,
@@ -276,7 +276,7 @@
           "Location" : [0.000000, 0.000000, 0.000000],
           "Name" : "UBillBoardComponent_3",
           "ParentName" : "USpotLightComponent_2",
-          "Rotation" : [-133.121368, 45.307709, 17.419052],
+          "Rotation" : [-77.266159, 80.163506, 81.973976],
           "Scale" : [1.500000, 1.500000, 1.500000],
           "Type" : "UBillBoardComponent",
           "bVisible" : "true"
@@ -292,13 +292,13 @@
           "bVisible" : "true"
         }],
       "Location" : [-1.199914, -16.833935, 11.224058],
-      "Rotation" : [74.763016, -19.887781, -79.787453],
+      "Rotation" : [74.763008, -19.887779, -79.787453],
       "Scale" : [1.000000, 1.000000, 1.000000],
       "Type" : "ASpotLight",
       "bCanEverTick" : "false",
       "bTickInEditor" : "false"
     },
-    "277" : {
+    "234" : {
       "Components" : [{
           "AngleFalloffExponent" : 2.000000,
           "AttenuationAngle" : 0.785398,
@@ -316,7 +316,7 @@
           "ShadowBias" : 0.001000,
           "ShadowResolutionScale" : 2.000000,
           "ShadowSharpen" : 0.000000,
-          "ShadowSlopeBias" : 1.000000,
+          "ShadowSlopeBias" : 0.000000,
           "Type" : "USpotLightComponent",
           "bLightEnabled" : "true",
           "bVisible" : "true"
@@ -329,7 +329,7 @@
           "Location" : [0.000000, 0.000000, 0.000000],
           "Name" : "UBillBoardComponent_4",
           "ParentName" : "USpotLightComponent_3",
-          "Rotation" : [-73.807030, 36.854454, 3.458273],
+          "Rotation" : [-77.167610, 76.662003, 12.457044],
           "Scale" : [1.500000, 1.500000, 1.500000],
           "Type" : "UBillBoardComponent",
           "bVisible" : "true"
@@ -351,7 +351,7 @@
       "bCanEverTick" : "false",
       "bTickInEditor" : "false"
     },
-    "281" : {
+    "238" : {
       "Components" : [{
           "AngleFalloffExponent" : 2.000000,
           "AttenuationAngle" : 0.785398,
@@ -361,7 +361,7 @@
           "IsEditorOnly" : "false",
           "IsVisualizationComponent" : "false",
           "LightColor" : [1.000000, 1.000000, 1.000000],
-          "Location" : [-0.581320, -15.919502, 11.153427],
+          "Location" : [-0.581320, -15.919502, 12.039209],
           "Name" : "USpotLightComponent_4",
           "ParentName" : "",
           "Rotation" : [155.794922, -61.632568, -158.418976],
@@ -369,7 +369,7 @@
           "ShadowBias" : 0.001000,
           "ShadowResolutionScale" : 2.000000,
           "ShadowSharpen" : 0.000000,
-          "ShadowSlopeBias" : 1.000000,
+          "ShadowSlopeBias" : 0.200000,
           "Type" : "USpotLightComponent",
           "bLightEnabled" : "true",
           "bVisible" : "true"
@@ -382,7 +382,7 @@
           "Location" : [0.000000, 0.000000, 0.000000],
           "Name" : "UBillBoardComponent_5",
           "ParentName" : "USpotLightComponent_4",
-          "Rotation" : [-108.384911, 39.245464, -33.594280],
+          "Rotation" : [-163.510727, 61.083759, -66.016617],
           "Scale" : [1.500000, 1.500000, 1.500000],
           "Type" : "UBillBoardComponent",
           "bVisible" : "true"
@@ -397,14 +397,14 @@
           "Type" : "UUUIDTextComponent",
           "bVisible" : "true"
         }],
-      "Location" : [-0.581320, -15.919502, 11.153427],
+      "Location" : [-0.581320, -15.919502, 12.039209],
       "Rotation" : [155.794922, -61.632568, -158.418976],
       "Scale" : [1.000000, 1.000000, 1.000000],
       "Type" : "ASpotLight",
       "bCanEverTick" : "false",
       "bTickInEditor" : "false"
     },
-    "286" : {
+    "242" : {
       "Components" : [{
           "IsEditorOnly" : "false",
           "IsVisualizationComponent" : "false",
@@ -446,11 +446,11 @@
           "CameraType" : 1,
           "FarZ" : 1000.000000,
           "FovY" : 90.000000,
-          "Location" : [-5.028870, -11.478733, 6.897275],
+          "Location" : [-3.456663, -8.903335, 8.488153],
           "MoveSpeed" : 19.000000,
           "NearZ" : 0.100000,
           "OrthoWidth" : 90.000000,
-          "Rotation" : [0.000000, 52.399948, -75.899635]
+          "Rotation" : [0.000000, 12.999961, -89.299561]
         },
         "Index" : 0,
         "ViewMode" : 2,

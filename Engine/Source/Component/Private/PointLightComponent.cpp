@@ -85,8 +85,8 @@ FPointLightInfo UPointLightComponent::GetPointlightInfo() const
 		Intensity,
 		AttenuationRadius,
 		DistanceFalloffExponent,
-		ResolutionScale,
-		Bias,
-		SlopeBias,
-		Sharpen };
+		ShadowResolutionScale,
+		ShadowBias,
+		ShadowSlopeBias,
+		ShadowSharpen };
 }
