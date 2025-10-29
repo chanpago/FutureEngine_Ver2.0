@@ -262,26 +262,51 @@ void USpotLightComponentWidget::RenderWidget()
 
         // Shadow Resolution Scale
         float ShadowResolutionScale = SpotLightComponent->GetShadowResolutionScale();
-        if (ImGui::SliderFloat("Shadow Resolution Scale", &ShadowResolutionScale, 0.25f, 2.0f, "%.2f"))
+        if (ImGui::SliderFloat("Shadow Resolution Scale", &ShadowResolutionScale, 0.25f, 4.0f, "%.2f"))
         {
             SpotLightComponent->SetShadowwResolutionScale(ShadowResolutionScale);
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("섀도우맵 해상도 배율\n0.25 = 256x256, 0.5 = 512x512\n1.0 = 1024x1024 (기본)\n1.5 = 1536x1536, 2.0 = 2048x2048\n\n주의: 현재 구조상 1.0 이상은 클리핑 발생 가능!");
+            ImGui::SetTooltip(
+                "Shadow resolution scale using 3-Tier system:\n\n"
+                "Low Tier  (512x512):  Scale 0.25 ~ 0.75\n"
+                "Mid Tier  (1024x1024): Scale 0.76 ~ 1.5\n"
+                "High Tier (2048x2048): Scale 1.51 ~ 4.0\n\n"
+                "Each tier can hold up to 8 lights.\n"
+                "Lights are automatically grouped by resolution tier."
+            );
         }
 
-        // Display current resolution
-        const float baseResolution = 1024.0f;
-        float currentResolution = baseResolution * ShadowResolutionScale;
-        ImGui::Text("Current Shadow Resolution: %.0f x %.0f", currentResolution, currentResolution);
+        // Determine which tier this light would be in
+        const char* tierName;
+        int tierResolution;
+        ImVec4 tierColor;
 
-        // Warning if scale > 1.0
-        if (ShadowResolutionScale > 1.0f)
+        if (ShadowResolutionScale <= 0.75f)
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Warning: Scale > 1.0 may cause clipping!");
-            ImGui::TextWrapped("GPU texture is fixed at 1024x1024. Viewport larger than texture will be clipped.");
+            tierName = "Low Tier";
+            tierResolution = 512;
+            tierColor = ImVec4(0.5f, 0.8f, 1.0f, 1.0f); // Light blue
         }
+        else if (ShadowResolutionScale <= 1.5f)
+        {
+            tierName = "Mid Tier";
+            tierResolution = 1024;
+            tierColor = ImVec4(0.5f, 1.0f, 0.5f, 1.0f); // Light green
+        }
+        else
+        {
+            tierName = "High Tier";
+            tierResolution = 2048;
+            tierColor = ImVec4(1.0f, 0.8f, 0.3f, 1.0f); // Gold
+        }
+
+        // Display tier information
+        ImGui::Text("Resolution Tier: ");
+        ImGui::SameLine();
+        ImGui::TextColored(tierColor, "%s", tierName);
+        ImGui::Text("Actual Shadow Resolution: %d x %d", tierResolution, tierResolution);
 
         // Shadow Bias
         float ShadowBias = SpotLightComponent->GetShadowBias();
