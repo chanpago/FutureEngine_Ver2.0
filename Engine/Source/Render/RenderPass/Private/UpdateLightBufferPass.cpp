@@ -186,7 +186,8 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
     // Initialize to invalid
     for (size_t i = 0; i < Mapping.size(); ++i) Mapping[i] = 0xFFFFFFFFu;
 
-    // Bake
+    // Bake and record CPU mapping
+    PointCubeIndexCPU.clear();
     const float zn = 0.1f;
 
     const D3D11_VIEWPORT vp = PointShadowViewport; // per-face viewport
@@ -252,7 +253,8 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
         }
         if (globalIndex != 0xFFFFFFFFu)
         {
-            Mapping[globalIndex] = cubeIdx; // map global point to cube index
+            Mapping[globalIndex] = cubeIdx; // map global point to cube index (GPU)
+            PointCubeIndexCPU[PL] = cubeIdx; // CPU map for UI/debug
         }
 
         for (int face = 0; face < 6; ++face)
@@ -261,9 +263,25 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
             ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetPointShadowCubeDSV((int)sliceIndex);
             if (!dsv) continue;
 
-            // Bind depth target and clear
-            DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
-            DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            // Select RTs based on filter (VSM writes moments to color RT)
+            if (FilterType == EShadowFilterType::VSM)
+            {
+                ID3D11RenderTargetView* rtv = Renderer.GetDeviceResources()->GetPointShadowColorRTV((int)sliceIndex);
+                ID3D11ShaderResourceView* NullSRVs[2] = { nullptr, nullptr };
+                // Unbind possibly bound SRVs (depth/moments) to avoid hazards
+                DeviceContext->PSSetShaderResources(16, 1, &NullSRVs[0]);
+                DeviceContext->PSSetShaderResources(17, 1, &NullSRVs[1]);
+                DeviceContext->OMSetRenderTargets(1, &rtv, dsv);
+                const float ClearMoments[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+                DeviceContext->ClearRenderTargetView(rtv, ClearMoments);
+                DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            }
+            else
+            {
+                // Depth-only
+                DeviceContext->OMSetRenderTargets(0, nullptr, dsv);
+                DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            }
             DeviceContext->RSSetViewports(1, &vp);
 
             // Update constants for this face
@@ -283,6 +301,13 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
                 RenderPrimitive(MeshComp);
             }
         }
+
+        // Generate mips for VSM moments if enabled
+        if (FilterType == EShadowFilterType::VSM)
+        {
+            auto srv = Renderer.GetDeviceResources()->GetPointShadowColorSRV();
+            if (srv) { DeviceContext->GenerateMips(srv); }
+        }
     }
 
     // Upload mapping to GPU
@@ -295,6 +320,14 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
     DeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
     DeviceContext->RSSetViewports(1, &OriginalViewport);
     DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
+}
+
+bool FUpdateLightBufferPass::GetPointCubeIndexCPU(const UPointLightComponent* Comp, uint32& OutCubeIdx) const
+{
+    auto it = PointCubeIndexCPU.find(Comp);
+    if (it == PointCubeIndexCPU.end()) return false;
+    OutCubeIdx = it->second;
+    return true;
 }
 
 void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
@@ -347,6 +380,11 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
     const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
     if (NumSpotLights > 0)
     {
+        // Unbind any SRVs that alias the spot shadow atlas to avoid D3D11 read-write hazards
+        // StaticMeshPass binds the spot atlas at PS t12 and the atlas entries at t13
+        ID3D11ShaderResourceView* NullSRVs[2] = { nullptr, nullptr };
+        DeviceContext->PSSetShaderResources(12, 2, NullSRVs);
+
         ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
         if (FilterType == EShadowFilterType::VSM)
         {

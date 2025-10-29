@@ -22,7 +22,8 @@ VSOut DepthPreviewVS(uint id : SV_VertexID)
     float2 uv  = float2((id == 2) ? 2.0 : 0.0, (id == 1) ? 2.0 : 0.0);
     VSOut o;
     o.Pos = float4(pos, 0.0, 1.0);
-    o.UV  = uv;
+    // Flip Y to match DirectX texture addressing used elsewhere (shadow sampling flips V)
+    o.UV  = float2(uv.x, 1.0 - uv.y);
     return o;
 }
 
