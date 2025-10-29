@@ -148,6 +148,37 @@ void UPointLightComponentWidget::RenderWidget()
         ImGui::SetTooltip("거리에 따라 밝기가 줄어드는 속도를 조절합니다.\n값이 클수록 감소가 더 급격합니다.");
     }
     
+    // Shadow parameters
+    float depthBias = PointLightComponent->GetBias();
+    if (ImGui::DragFloat("Shadow Bias", &depthBias, 0.0001f, 0.0f, 0.02f, "%.5f"))
+    {
+        PointLightComponent->SetBias(depthBias);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("그림자 깊이 바이어스(아크네 방지)");
+    }
+
+    float slopeBias = PointLightComponent->GetSlopeBias();
+    if (ImGui::DragFloat("Slope Bias", &slopeBias, 0.0005f, 0.0f, 0.2f, "%.5f"))
+    {
+        PointLightComponent->SetSlopeBias(slopeBias);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("경사(법선) 기반 추가 바이어스");
+    }
+
+    float sharpen = PointLightComponent->GetSharpen();
+    if (ImGui::DragFloat("Sharpen", &sharpen, 0.05f, 0.0f, 3.0f, "%.2f"))
+    {
+        PointLightComponent->SetSharpen(sharpen);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("그림자 경계 선명도");
+    }
+    
     ImGui::PopStyleColor(3);
 
     // Override camera with light's perspective (position only) + auto-restore

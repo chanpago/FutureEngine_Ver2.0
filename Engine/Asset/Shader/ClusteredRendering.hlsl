@@ -16,6 +16,11 @@ struct FDirectionalLightInfo
     float4 Color;
     float3 Direction;
     float Intensity;
+
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
 };
 
 struct FPointLightInfo
@@ -25,6 +30,12 @@ struct FPointLightInfo
     float Intensity;
     float Range;
     float DistanceFalloffExponent;
+
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
+    
     float2 Padding;
 };
 
@@ -39,6 +50,11 @@ struct FSpotLightInfo
     float OuterConeAngle;
     float AngleFalloffExponent;
     float3 Direction;
+
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
 };
 
 // reflectance와 곱해지기 전

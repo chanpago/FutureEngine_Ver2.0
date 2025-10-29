@@ -15,7 +15,6 @@ FStaticMeshPass::FStaticMeshPass(UPipeline* InPipeline, ID3D11Buffer* InConstant
 {
 	ConstantBufferMaterial = FRenderResourceFactory::CreateConstantBuffer<FMaterialConstants>();
 	ConstantBufferShadowMap = FRenderResourceFactory::CreateConstantBuffer<FShadowMapConstants>();
-	ConstantBufferSpotShadow = FRenderResourceFactory::CreateConstantBuffer<FSpotShadowConstants>();
 }
 
 void FStaticMeshPass::Execute(FRenderingContext& Context)
@@ -371,5 +370,4 @@ void FStaticMeshPass::Release()
 {
 	SafeRelease(ConstantBufferMaterial);
 	SafeRelease(ConstantBufferShadowMap);
-	SafeRelease(ConstantBufferSpotShadow);
 }

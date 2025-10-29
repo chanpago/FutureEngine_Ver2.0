@@ -23,5 +23,4 @@ private:
     
     ID3D11Buffer* ConstantBufferMaterial = nullptr;
     ID3D11Buffer* ConstantBufferShadowMap = nullptr;
-    ID3D11Buffer* ConstantBufferSpotShadow = nullptr;
 };
