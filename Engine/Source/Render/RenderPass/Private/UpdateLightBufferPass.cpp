@@ -473,7 +473,7 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
     Pipeline->UpdatePipeline(PipelineInfo);
 
 
-    // +-+-+ BAKE SPOTLIGHT SHADOW MAP (atlas for multiple casters) +-+-+
+    // +-+-+ BAKE SPOTLIGHT SHADOW MAP (Multi-Resolution Atlas, 3-Tier System) +-+-+
     // Build filtered spot list matching LightPass ordering (visible + enabled)
     TArray<USpotLightComponent*> FilteredSpots;
     for (auto* SL : Context.SpotLights)
@@ -485,7 +485,54 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
         }
     }
     const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
-    UE_LOG("BakeSpotShadowMap: NumSpotLights = %d", NumSpotLights);
+    UE_LOG("BakeSpotShadowMap: NumSpotLights = %d (3-Tier System)", NumSpotLights);
+
+    // Classify lights into tiers based on ShadowResolutionScale
+    struct FSpotLightTierInfo
+    {
+        USpotLightComponent* Light;
+        uint32 Tier;           // 0=Low, 1=Mid, 2=High
+        uint32 TierLocalIndex; // Index within tier
+        uint32 GlobalIndex;    // Original index in FilteredSpots
+    };
+    TArray<FSpotLightTierInfo> TierClassified[3]; // [0]=Low, [1]=Mid, [2]=High
+
+    for (uint32 idx = 0; idx < (uint32)NumSpotLights; ++idx)
+    {
+        auto* SL = FilteredSpots[idx];
+        if (!SL) continue;
+
+        float scale = SL->GetShadowResolutionScale();
+        uint32 tier = 0; // Default to Low
+
+        if (scale > FSpotShadowAtlasLayout::MidThreshold)
+            tier = 2; // High
+        else if (scale > FSpotShadowAtlasLayout::LowThreshold)
+            tier = 1; // Mid
+        else
+            tier = 0; // Low
+
+        // Check if tier is full
+        uint32 maxLights = (tier == 2) ? FSpotShadowAtlasLayout::MaxHighLights :
+                          (tier == 1) ? FSpotShadowAtlasLayout::MaxMidLights :
+                                       FSpotShadowAtlasLayout::MaxLowLights;
+
+        if (TierClassified[tier].size() >= maxLights)
+        {
+            UE_LOG("Warning: Spot Light tier %d is full, skipping light %d", tier, idx);
+            continue;
+        }
+
+        FSpotLightTierInfo info;
+        info.Light = SL;
+        info.Tier = tier;
+        info.TierLocalIndex = static_cast<uint32>(TierClassified[tier].size());
+        info.GlobalIndex = idx;
+        TierClassified[tier].push_back(info);
+    }
+
+    UE_LOG("Spot Shadow Tier Distribution: Low=%d, Mid=%d, High=%d",
+           TierClassified[0].size(), TierClassified[1].size(), TierClassified[2].size());
     
     if (NumSpotLights > 0)
     {
@@ -514,148 +561,185 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
             DeviceContext->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         }
 
-        // Prepare atlas math
-        const float tileW = SpotShadowViewport.Width;
-        const float tileH = SpotShadowViewport.Height;
-        const float atlasW = tileW * static_cast<float>(SpotAtlasCols);
-        const float atlasH = tileH * static_cast<float>(SpotAtlasRows);
-
         // Build entries to upload to structured buffer (index by global spot index)
         TArray<FSpotShadowAtlasEntry> Entries;
         Entries.resize(NumSpotLights);
 
-        // Render each spot into its atlas tile
-        for (int32 idx = 0; idx < NumSpotLights; ++idx)
+        const float atlasW = static_cast<float>(FSpotShadowAtlasLayout::AtlasWidth);
+        const float atlasH = static_cast<float>(FSpotShadowAtlasLayout::AtlasHeight);
+
+        // Render each tier
+        for (uint32 tierIndex = 0; tierIndex < 3; ++tierIndex)
         {
-            USpotLightComponent* SpotCaster = FilteredSpots[idx];
-            if (!SpotCaster) { continue; }
+            const auto& TierLights = TierClassified[tierIndex];
+            if (TierLights.empty()) continue;
 
-            FMatrix V, P, PSMMatrix = FMatrix::Identity();
-            
-            // Check if PSM is enabled for this spotlight
-            // ⚠️ PSM은 SpotLight에 부적합: 카메라 의존성 때문에 그림자가 불안정
-            // 권장: Cast Shadows를 꺼서 표준 Perspective Shadow Mapping 사용
-            if (SpotCaster->GetCastShadows())
+            // Get tier parameters
+            uint32 tileSize, tilesX, offsetY;
+            const char* tierName;
+
+            if (tierIndex == 2) // High
             {
-                // === PSM Path (Experimental - Camera Dependent!) ===
-                UE_LOG("SpotLight[%d] using PSM (Warning: Camera dependent!)", idx);
-                UCamera* MainCamera = Context.CurrentCamera;
-                if (!MainCamera) continue;
-                
-                FMatrix CameraView = MainCamera->GetCameraViewMatrix();
-                FMatrix CameraProj = MainCamera->GetCameraProjectionMatrix();
-                
-                const FVector eye = SpotCaster->GetWorldLocation();
-                const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
-                const float outerAngle = FVector::GetDegreeToRadian(SpotCaster->GetOuterConeAngle());
-                
-                BuildSpotLightPSM(CameraView, CameraProj, eye, fwd, outerAngle,
-                    (int)tileW, (int)tileH, V, P, PSMMatrix);
-                //UE_LOG("  LightPos=(%.2f,%.2f,%.2f) Dir=(%.2f,%.2f,%.2f)", eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
+                tileSize = FSpotShadowAtlasLayout::HighTileSize;
+                tilesX = FSpotShadowAtlasLayout::HighTilesX;
+                offsetY = FSpotShadowAtlasLayout::HighOffsetY;
+                tierName = "High";
             }
-            else
+            else if (tierIndex == 1) // Mid
             {
-                // === Standard Path (LVP) ===
-                UE_LOG("SpotLight[%d] using Standard Shadow (Camera Independent)", idx);
-                // Compute view matrix from light basis
-                const FVector eye = SpotCaster->GetWorldLocation();
-                const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
-                UE_LOG("  Light Pos=(%.2f, %.2f, %.2f), Fwd=(%.2f, %.2f, %.2f)",
-                    eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
-                const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
-                const FVector right = tmpUp.Cross(fwd).GetNormalized();
-                const FVector up = fwd.Cross(right);
-
-                V = FMatrix::Identity();
-                V.Data[0][0]=right.X; V.Data[0][1]=up.X; V.Data[0][2]=fwd.X;
-                V.Data[1][0]=right.Y; V.Data[1][1]=up.Y; V.Data[1][2]=fwd.Y;
-                V.Data[2][0]=right.Z; V.Data[2][1]=up.Z; V.Data[2][2]=fwd.Z;
-                V.Data[3][0]= -eye.Dot(right);
-                V.Data[3][1]= -eye.Dot(up);
-                V.Data[3][2]= -eye.Dot(fwd);
-
-                // Perspective projection (row-vector LH)
-                const float fov = std::max(0.001f, SpotCaster->GetOuterConeAngle()) * 2.0f;
-                const float aspect = 1.0f;
-                const float zn = 0.1f;
-                const float zf = std::max(zn + 0.1f, SpotCaster->GetAttenuationRadius());
-                P = FMatrix::Identity();
-                const float yScale = 1.0f / tanf(fov * 0.5f);
-                const float xScale = yScale / aspect;
-                P.Data[0][0] = xScale;
-                P.Data[1][1] = yScale;
-                P.Data[2][2] = zf / (zf - zn);
-                P.Data[3][2] = -zn * zf / (zf - zn);
-                P.Data[2][3] = 1.0f;
-                P.Data[3][3] = 0.0f;
+                tileSize = FSpotShadowAtlasLayout::MidTileSize;
+                tilesX = FSpotShadowAtlasLayout::MidTilesX;
+                offsetY = FSpotShadowAtlasLayout::MidOffsetY;
+                tierName = "Mid";
+            }
+            else // Low
+            {
+                tileSize = FSpotShadowAtlasLayout::LowTileSize;
+                tilesX = FSpotShadowAtlasLayout::LowTilesX;
+                offsetY = FSpotShadowAtlasLayout::LowOffsetY;
+                tierName = "Low";
             }
 
-            // Update constant buffer used by shadow depth pass (b6 VS)
-            FShadowMapConstants SpotCasterConsts = {};
-            
-            // PSM 경로일 때는 V와 P가 PSM 변환을 포함
-            // 일반 경로일 때는 V와 P가 표준 Light View/Proj
-            SpotCasterConsts.LightViewP[0] = V;
-            SpotCasterConsts.LightProjP[0] = P;
-            SpotCasterConsts.LightViewPInv[0] = V.Inverse();
-            SpotCasterConsts.CameraClipToLightClip = PSMMatrix;  // PSM: World → Light Clip (전체 변환)
-            SpotCasterConsts.EyeView = Context.CurrentCamera ? Context.CurrentCamera->GetCameraViewMatrix() : FMatrix::Identity();
-            SpotCasterConsts.EyeProj = Context.CurrentCamera ? Context.CurrentCamera->GetCameraProjectionMatrix() : FMatrix::Identity();
-            SpotCasterConsts.ShadowMapSize = FVector2(tileW, tileH);
-            SpotCasterConsts.ShadowParams = FVector4(SpotCaster->GetShadowBias(), SpotCaster->GetShadowSlopeBias(), 0, 0);
-            // LightDirWS: "표면 → 광원" 방향 (bias를 위해)
-            SpotCasterConsts.LightDirWS = -SpotCaster->GetForwardVector().GetNormalized();
-            SpotCasterConsts.bInvertedLight = 0;
-            SpotCasterConsts.bUsePSM = SpotCaster->GetCastShadows() ? 1 : 0;
-            FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, SpotCasterConsts);
+            const float tileW = static_cast<float>(tileSize);
+            const float tileH = static_cast<float>(tileSize);
 
-            // Calculate atlas tile viewport
-            const uint32 tileX = static_cast<uint32>(idx % SpotAtlasCols);
-            const uint32 tileY = static_cast<uint32>(idx / SpotAtlasCols);
-            D3D11_VIEWPORT vp = SpotShadowViewport;
-            vp.TopLeftX = tileW * static_cast<float>(tileX);
-            vp.TopLeftY = tileH * static_cast<float>(tileY);
-            DeviceContext->RSSetViewports(1, &vp);
+            UE_LOG("Rendering Spot Shadow Tier %s: %d lights at %dx%d", tierName, TierLights.size(), tileSize, tileSize);
 
-            // Render scene from this spot light POV into its tile
-            for (auto MeshComp : Context.StaticMeshes)
+            // Render each light in this tier
+            for (const auto& TierInfo : TierLights)
             {
-                if (!MeshComp || !MeshComp->IsVisible()) continue;
-                RenderPrimitive(MeshComp);
+                USpotLightComponent* SpotCaster = TierInfo.Light;
+                if (!SpotCaster) continue;
+
+                const uint32 localIdx = TierInfo.TierLocalIndex;
+                const uint32 globalIdx = TierInfo.GlobalIndex;
+
+                FMatrix V, P, PSMMatrix = FMatrix::Identity();
+
+                // Check if PSM is enabled for this spotlight
+                // ⚠️ PSM은 SpotLight에 부적합: 카메라 의존성 때문에 그림자가 불안정
+                // 권장: Cast Shadows를 꺼서 표준 Perspective Shadow Mapping 사용
+                if (SpotCaster->GetCastShadows())
+                {
+                    // === PSM Path (Experimental - Camera Dependent!) ===
+                    UE_LOG("SpotLight[%d] using PSM (Warning: Camera dependent!)", globalIdx);
+                    UCamera* MainCamera = Context.CurrentCamera;
+                    if (!MainCamera) continue;
+
+                    FMatrix CameraView = MainCamera->GetCameraViewMatrix();
+                    FMatrix CameraProj = MainCamera->GetCameraProjectionMatrix();
+
+                    const FVector eye = SpotCaster->GetWorldLocation();
+                    const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
+                    const float outerAngle = FVector::GetDegreeToRadian(SpotCaster->GetOuterConeAngle());
+
+                    BuildSpotLightPSM(CameraView, CameraProj, eye, fwd, outerAngle,
+                        (int)tileW, (int)tileH, V, P, PSMMatrix);
+                    //UE_LOG("  LightPos=(%.2f,%.2f,%.2f) Dir=(%.2f,%.2f,%.2f)", eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
+                }
+                else
+                {
+                    // === Standard Path (LVP) ===
+                    UE_LOG("SpotLight[%d] using Standard Shadow (Camera Independent)", globalIdx);
+                    // Compute view matrix from light basis
+                    const FVector eye = SpotCaster->GetWorldLocation();
+                    const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
+                    UE_LOG("  Light Pos=(%.2f, %.2f, %.2f), Fwd=(%.2f, %.2f, %.2f)",
+                        eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
+                    const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+                    const FVector right = tmpUp.Cross(fwd).GetNormalized();
+                    const FVector up = fwd.Cross(right);
+
+                    V = FMatrix::Identity();
+                    V.Data[0][0]=right.X; V.Data[0][1]=up.X; V.Data[0][2]=fwd.X;
+                    V.Data[1][0]=right.Y; V.Data[1][1]=up.Y; V.Data[1][2]=fwd.Y;
+                    V.Data[2][0]=right.Z; V.Data[2][1]=up.Z; V.Data[2][2]=fwd.Z;
+                    V.Data[3][0]= -eye.Dot(right);
+                    V.Data[3][1]= -eye.Dot(up);
+                    V.Data[3][2]= -eye.Dot(fwd);
+
+                    // Perspective projection (row-vector LH)
+                    const float fov = std::max(0.001f, SpotCaster->GetOuterConeAngle()) * 2.0f;
+                    const float aspect = 1.0f;
+                    const float zn = 0.1f;
+                    const float zf = std::max(zn + 0.1f, SpotCaster->GetAttenuationRadius());
+                    P = FMatrix::Identity();
+                    const float yScale = 1.0f / tanf(fov * 0.5f);
+                    const float xScale = yScale / aspect;
+                    P.Data[0][0] = xScale;
+                    P.Data[1][1] = yScale;
+                    P.Data[2][2] = zf / (zf - zn);
+                    P.Data[3][2] = -zn * zf / (zf - zn);
+                    P.Data[2][3] = 1.0f;
+                    P.Data[3][3] = 0.0f;
+                }
+
+                // Update constant buffer used by shadow depth pass (b6 VS)
+                FShadowMapConstants SpotCasterConsts = {};
+
+                // PSM 경로일 때는 V와 P가 PSM 변환을 포함
+                // 일반 경로일 때는 V와 P가 표준 Light View/Proj
+                SpotCasterConsts.LightViewP[0] = V;
+                SpotCasterConsts.LightProjP[0] = P;
+                SpotCasterConsts.LightViewPInv[0] = V.Inverse();
+                SpotCasterConsts.CameraClipToLightClip = PSMMatrix;  // PSM: World → Light Clip (전체 변환)
+                SpotCasterConsts.EyeView = Context.CurrentCamera ? Context.CurrentCamera->GetCameraViewMatrix() : FMatrix::Identity();
+                SpotCasterConsts.EyeProj = Context.CurrentCamera ? Context.CurrentCamera->GetCameraProjectionMatrix() : FMatrix::Identity();
+                SpotCasterConsts.ShadowMapSize = FVector2(tileW, tileH);
+                SpotCasterConsts.ShadowParams = FVector4(SpotCaster->GetShadowBias(), SpotCaster->GetShadowSlopeBias(), 0, 0);
+                // LightDirWS: "표면 → 광원" 방향 (bias를 위해)
+                SpotCasterConsts.LightDirWS = -SpotCaster->GetForwardVector().GetNormalized();
+                SpotCasterConsts.bInvertedLight = 0;
+                SpotCasterConsts.bUsePSM = SpotCaster->GetCastShadows() ? 1 : 0;
+                FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, SpotCasterConsts);
+
+                // Calculate atlas tile position based on tier layout
+                const uint32 tileX = localIdx % tilesX;
+                const uint32 tileY = localIdx / tilesX;
+
+                D3D11_VIEWPORT vp = {};
+                vp.TopLeftX = tileW * static_cast<float>(tileX);
+                vp.TopLeftY = static_cast<float>(offsetY) + tileH * static_cast<float>(tileY);
+                vp.Width = tileW;
+                vp.Height = tileH;
+                vp.MinDepth = 0.0f;
+                vp.MaxDepth = 1.0f;
+                DeviceContext->RSSetViewports(1, &vp);
+
+                // Render scene from this spot light POV into its tile
+                for (auto MeshComp : Context.StaticMeshes)
+                {
+                    if (!MeshComp || !MeshComp->IsVisible()) continue;
+                    RenderPrimitive(MeshComp);
+                }
+
+                // First one cached for backwards compatibility (used by StaticMeshPass)
+                if (globalIdx == 0)
+                {
+                    SpotLightView = V;
+                    SpotLightProj = P;
+                }
+
+                // Compute atlas transform with 1.5 texel inner padding to avoid bleeding
+                const float sx = tileW / atlasW;
+                const float sy = tileH / atlasH;
+                const float ox = vp.TopLeftX / atlasW;
+                const float oy = vp.TopLeftY / atlasH;
+                const float padU = 1.5f / atlasW;
+                const float padV = 1.5f / atlasH;
+
+                FSpotShadowAtlasEntry entry;
+                entry.View = V;
+                entry.Proj = P;
+                entry.AtlasScale = FVector2(std::max(0.0f, sx - 2.0f * padU), std::max(0.0f, sy - 2.0f * padV));
+                entry.AtlasOffset = FVector2(ox + padU, oy + padV);
+                entry.PSMMatrix = PSMMatrix;
+                entry.bUsePSM = SpotCaster->GetCastShadows() ? 1 : 0;
+                entry.Padding = FVector(0, 0, 0);
+
+                // Write at the same index used by clustered lighting for this spotlight
+                Entries[globalIdx] = entry;
             }
-
-            // Optionally generate mips for VSM moments (if SRV exposes them)
-            // if (FilterType == EShadowFilterType::VSM)
-            // {
-            //     auto srv = Renderer.GetDeviceResources()->GetSpotShadowMapColorSRV();
-            //     DeviceContext->GenerateMips(srv);
-            // }
-
-            // First one cached for backwards compatibility (used by StaticMeshPass)
-            if (idx == 0)
-            {
-                SpotLightView = V;
-                SpotLightProj = P;
-            }
-
-            // Compute atlas transform with 1 texel inner padding to avoid bleeding
-            const float sx = tileW / atlasW;
-            const float sy = tileH / atlasH;
-            const float ox = (tileW * tileX) / atlasW;
-            const float oy = (tileH * tileY) / atlasH;
-            const float padU = 1.5f / atlasW; // ~1.5 texels
-            const float padV = 1.5f / atlasH;
-
-            FSpotShadowAtlasEntry entry;
-            entry.View = V;
-            entry.Proj = P;
-            entry.AtlasScale = FVector2(std::max(0.0f, sx - 2.0f * padU), std::max(0.0f, sy - 2.0f * padV));
-            entry.AtlasOffset = FVector2(ox + padU, oy + padV);
-            entry.PSMMatrix = PSMMatrix;  // PSM: World → Light Clip
-            entry.bUsePSM = SpotCaster->GetCastShadows() ? 1 : 0;
-            entry.Padding = FVector(0, 0, 0);
-            // Write at the same index used by clustered lighting for this spotlight
-            Entries[idx] = entry;
         }
 
         // Upload entries to GPU structured buffer

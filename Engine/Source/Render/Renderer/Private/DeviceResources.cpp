@@ -694,12 +694,13 @@ void UDeviceResources::CreateSpotShadowMapResources()
         return;
     }
 
-    // Configure a fixed 4x4 atlas of 1024x1024 tiles for spotlights
-    const UINT TileSize = 1024;
-    const UINT AtlasCols = 4;
-    const UINT AtlasRows = 4;
-    const UINT ShadowMapWidth = TileSize * AtlasCols;
-    const UINT ShadowMapHeight = TileSize * AtlasRows;
+    // Multi-Resolution Atlas for Spot Light Shadows (3-Tier System)
+    // High Tier: 2048x2048 x 8 lights (4x2 layout, Y=0~4096)
+    // Mid Tier:  1024x1024 x 8 lights (8x1 layout, Y=4096~5120)
+    // Low Tier:  512x512   x 8 lights (8x1 layout, Y=5120~5632)
+    // Total: 24 spot lights with shadow support
+    const UINT ShadowMapWidth = 8192;
+    const UINT ShadowMapHeight = 8192;
 
     // Depth Texture for Spot Shadow
     D3D11_TEXTURE2D_DESC DepthDesc = {};
