@@ -521,6 +521,12 @@ float SampleShadowCSM(float3 worldPos, float viewDepth)
 
 float PSM_Visibility(float3 worldPos)
 {
+    if (bUseCSM != 0)
+    {
+        float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
+        return SampleShadowCSM(worldPos, ViewDepth);
+    }
+    
     // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
     float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
     
@@ -569,12 +575,8 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
-    
-    if (bUseCSM != 0)
-    {
-        return SampleShadowCSM(worldPos, ViewDepth);
-    }
-    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
+
+    if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
         float sd = ShadowMapTexture.SampleLevel(SamplerWrap, ShadowUV, 0).r;
