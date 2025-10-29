@@ -121,7 +121,8 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				ShadowConsts.LightViewP[i] = CSMData.LightViewP[i];
 				ShadowConsts.LightProjP[i] = CSMData.LightProjP[i];
 			}
-			ShadowConsts.CascadeSplits = CSMData.CascadeSplits;
+			//ShadowConsts.CascadeSplits = CSMData.CascadeSplits;
+			memcpy(ShadowConsts.CascadeSplits, CSMData.CascadeSplits, sizeof(float) * MAX_CASCADES);
 			ShadowConsts.bUseCSM = 1.0f;
 			break;
 		}

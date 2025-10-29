@@ -83,7 +83,7 @@ public:
 	FVector4 GetLightOrthoLTRB() const {return LightOrthoLTRB;}
 
 	// Calculate Cascade split distance
-	void CalculateCascadeSplits(FVector4& OutSplits, const UCamera* InCamera);
+	void CalculateCascadeSplits(float* OutSplits, const UCamera* InCamera);
 	const FShadowMapConstants& GetCascadedShadowMapConstants() const { return CascadedShadowMapConstants; }
 
 	struct FShadowCalculationData
@@ -91,7 +91,7 @@ public:
 	    TArray<FMatrix> LightViews;
 	    TArray<FMatrix> LightProjs;
 	    FVector4        LightOrthoParams; // For EShadowProjectionType::None
-		FVector4		CascadeSplits;	  // For EShadowProjectionType::CSM
+		float CascadeSplits[MAX_CASCADES];    // For EShadowProjectionType::CSM
 	};
 
 private:

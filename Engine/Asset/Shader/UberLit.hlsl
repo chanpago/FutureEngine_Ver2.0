@@ -125,11 +125,15 @@ cbuffer ShadowMapConstants : register(b6)
     row_major float4x4 LightViewP[MAX_CASCADES]; // V_L'
     row_major float4x4 LightProjP[MAX_CASCADES]; // P_L'
     row_major float4x4 LightViewPInv[MAX_CASCADES]; // (V'_L)^(-1)
+    
+    float4 CascadeSplits[MAX_CASCADES / 4];
+    uint NumCascades;
+    float3 pad0;
 
     row_major float4x4 CameraClipToLightClip;
     
     float4 ShadowParams;               // x=bias, y=slopeBias, z=sharpen, w=reserved
-    float4 CascadeSplits;
+    float4 NotUsedCascadeSplits;
     float3 LightDirWS;                 // 월드공간 광원 방향
     uint   bInvertedLight;             // 0: normal, 1: inverted
 
@@ -140,7 +144,7 @@ cbuffer ShadowMapConstants : register(b6)
     uint bUseVSM;
     uint bUsePCF;
     uint bUseCSM;
-    float2 pad;
+    float2 pad1;
 };
 
 StructuredBuffer<int> PointLightIndices : register(t6);
@@ -475,12 +479,14 @@ float SampleShadowCSM(float3 worldPos, float viewDepth)
 {
     // Select Cascade
     int CascadeIndex = 0;
-    if (viewDepth > CascadeSplits.x)
-        CascadeIndex = 1;
-    if (viewDepth > CascadeSplits.y)
-        CascadeIndex = 2;
-    if (viewDepth > CascadeSplits.z)
-        CascadeIndex = 3;
+    [unroll] for (int i = 0; i < MAX_CASCADES; ++i)
+    {
+        float splitValue = CascadeSplits[i / 4][i % 4];
+        if (viewDepth > splitValue)
+        {
+            CascadeIndex++;
+        }
+    }
        
     // World to Light Space
     float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[CascadeIndex]);
