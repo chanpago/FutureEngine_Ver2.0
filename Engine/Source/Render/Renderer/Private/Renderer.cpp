@@ -67,6 +67,7 @@ void URenderer::Init(HWND InWindowHandle)
 	CreateGizmoShader();
 	CreateClusteredRenderingGrid();
 	CreateShadowMapShader();
+	CreateAxisGizmoShader();
 
 	//ViewportClient->InitializeLayout(DeviceResources->GetViewportInfo());
 
@@ -150,12 +151,19 @@ void URenderer::CreateDepthStencilState()
 	DecalDescription.StencilEnable = FALSE;
 	GetDevice()->CreateDepthStencilState(&DecalDescription, &DecalDepthStencilState);
 
-
 	// Disabled Depth Stencil (Depth X, Stencil X)
 	D3D11_DEPTH_STENCIL_DESC DisabledDescription = {};
 	DisabledDescription.DepthEnable = FALSE;
 	DisabledDescription.StencilEnable = FALSE;
 	GetDevice()->CreateDepthStencilState(&DisabledDescription, &DisabledDepthStencilState);
+
+	// Gizmo Depth State (Depth O, Depth Write O, Func=LESS_EQUAL)
+	D3D11_DEPTH_STENCIL_DESC GizmoDepthDescription = {};
+	GizmoDepthDescription.DepthEnable = TRUE;
+	GizmoDepthDescription.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+	GizmoDepthDescription.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+	GizmoDepthDescription.StencilEnable = FALSE;
+	GetDevice()->CreateDepthStencilState(&GizmoDepthDescription, &GizmoDepthState);
 }
 
 void URenderer::CreateBlendState()
@@ -441,6 +449,19 @@ void URenderer::CreateShadowMapShader()
 	ShadowMapClampSampler = FRenderResourceFactory::CreateClampShadowSamplerState();
 }
 
+void URenderer::CreateAxisGizmoShader()
+{
+	TArray<D3D11_INPUT_ELEMENT_DESC> GizmoLayout =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FNormalVertex, Position), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FNormalVertex, Normal), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(FNormalVertex, Color), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(FNormalVertex, TexCoord), D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+	FRenderResourceFactory::CreateVertexShaderAndInputLayout(L"Asset/Shader/GizmoShader.hlsl", GizmoLayout, &AxisGizmoVertexShader, &AxisGizmoInputLayout);
+	FRenderResourceFactory::CreatePixelShader(L"Asset/Shader/GizmoShader.hlsl", &AxisGizmoPixelShader);
+}
+
 void URenderer::CreateClusteredRenderingGrid()
 {
 	const std::wstring ShaderFilePathString = L"Asset/Shader/ClusteredRenderingGrid.hlsl";
@@ -659,6 +680,10 @@ void URenderer::ReleaseDefaultShader()
 	SafeRelease(ClusteredRenderingGridInputLayout);
 	SafeRelease(ClusteredRenderingGridVS);
 	SafeRelease(ClusteredRenderingGridPS);
+
+	SafeRelease(AxisGizmoVertexShader);
+	SafeRelease(AxisGizmoPixelShader);
+	SafeRelease(AxisGizmoInputLayout);
 }
 
 void URenderer::ReleaseDepthStencilState()
@@ -666,6 +691,7 @@ void URenderer::ReleaseDepthStencilState()
 	SafeRelease(DefaultDepthStencilState);
 	SafeRelease(DecalDepthStencilState);
 	SafeRelease(DisabledDepthStencilState);
+	SafeRelease(GizmoDepthState);
 	if (GetDeviceContext())
 	{
 		GetDeviceContext()->OMSetRenderTargets(0, nullptr, nullptr);
@@ -927,7 +953,7 @@ void URenderer::RenderEditorPrimitive(const FEditorPrimitive& InPrimitive, const
         InPrimitive.InputLayout ? InPrimitive.InputLayout : DefaultInputLayout,
         InPrimitive.VertexShader ? InPrimitive.VertexShader : DefaultVertexShader,
 		FRenderResourceFactory::GetRasterizerState(InRenderState),
-        InPrimitive.bShouldAlwaysVisible ? DisabledDepthStencilState : DefaultDepthStencilState,
+        InPrimitive.bShouldAlwaysVisible ? GizmoDepthState : DefaultDepthStencilState,
         InPrimitive.PixelShader ? InPrimitive.PixelShader : DefaultPixelShader,
         nullptr,
         InPrimitive.Topology

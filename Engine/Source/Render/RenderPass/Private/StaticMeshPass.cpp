@@ -72,7 +72,8 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 			ShadowConsts.LightViewP[0] = LightBufferPass->GetLightViewMatrix();
 			ShadowConsts.LightProjP[0] = LightBufferPass->GetLightProjectionMatrix();
 			ShadowConsts.LightViewPInv[0] = ShadowConsts.LightViewP[0].Inverse();
-
+			ShadowConsts.CameraClipToLightClip = FMatrix::Identity();
+				
 			ShadowConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
 			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
 			ShadowConsts.LightDirWS = LdirWS;
@@ -86,7 +87,13 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		}
 		case EShadowProjectionType::CSM:
 		{
-			ShadowConsts = LightBufferPass->GetCascadedShadowMapConstants();
+			const auto& CSMData = LightBufferPass->GetCascadedShadowMapConstants();
+			for (int i = 0; i < MAX_CASCADES; ++i)
+			{
+				ShadowConsts.LightViewP[i] = CSMData.LightViewP[i];
+				ShadowConsts.LightProjP[i] = CSMData.LightProjP[i];
+			}
+			ShadowConsts.CascadeSplits = CSMData.CascadeSplits;
 			ShadowConsts.bUseCSM = 1.0f;
 			break;
 		}
@@ -97,7 +104,7 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 		if (ProjectionType == EShadowProjectionType::CSM)
 		{
 			ShadowMapSRV = ShadowConsts.bUseVSM
-				? nullptr /* Renderer.GetDeviceResources()->GetCascadedShadowMapColorSRV() */
+				? Renderer.GetDeviceResources()->GetCascadedShadowMapColorSRV()
 				: Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
 		}
 		else  // LVP or PSM
@@ -106,30 +113,6 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 				? Renderer.GetDeviceResources()->GetDirectionalShadowMapColorSRV()
 				: Renderer.GetDeviceResources()->GetDirectionalShadowMapSRV();
 		}
-
-		//if (bUseCSM)
-		//{
-		//	//// Get pre-computed CSM constants from LightBufferPass
-		//	//ShadowConsts = LightBufferPass->GetCascadedShadowMapConstants();
-		//	//// Specify the use of CSM
-		//	//ShadowConsts.bUseCSM = 1.0f;
-
-		//	//if (bUseVSM)
-		//	//{
-		//	//	// CSM + VSM
-		//	//	ShadowConsts.bUseVSM = 1.0f;
-		//	//	ShadowConsts.ShadowParams.X = 0.0015f;  // VSM needs less bias
-		//	//	// TODO: needs Texture2DArray resource of VSM format (color)
-		//	//	// bShouldBindShadows = false;        // Temporarily disabled
-		//	//}
-		//	//else
-		//	//{
-		//	//	// Only CSM
-		//	//	ShadowConsts.bUseVSM = 0.0f;
-		//	//	ShadowConsts.ShadowParams.X = 0.005f;  // VSM needs less bias
-		//	//	ShadowMapSRV = Renderer.GetDeviceResources()->GetCascadedShadowMapSRV();
-		//	//}
-		//}
 
 		if (ShadowMapSRV)  // Shadow Map이 존재할 때만 바인딩
 		{

@@ -17,6 +17,8 @@ public:
 	void ReleaseNormalBuffer();
 	void CreateDepthBuffer();
 	void ReleaseDepthBuffer();
+	void CreateGizmoDepthBuffer();
+	void ReleaseGizmoDepthBuffer();
 
 	// Scene Color Texture, rtv, srv
 	void CreateSceneColorTarget();
@@ -109,8 +111,14 @@ public:
 	ID3D11Texture2D* GetSceneColorTexture() const {return SceneColorTexture; }
 
 	ID3D11ShaderResourceView* GetCascadedShadowMapSRV() const { return CascadedShadowMapSRV; }
+	ID3D11ShaderResourceView* GetCascadedShadowMapColorSRV() const { return CascadedShadowMapColorSRV; }
+	ID3D11ShaderResourceView* GetCascadedShadowMapSliceSRV(int CascadeIndex) const;
 	ID3D11DepthStencilView* GetCascadedShadowMapDSV(int CascadeIndex) const;
+	ID3D11RenderTargetView* GetCascadedShadowMapColorRTV(int CascadeIndex) const;
 	
+	ID3D11Texture2D* GetGizmoDepthTexture() const { return GizmoDepthTexture; }
+	ID3D11DepthStencilView* GetGizmoDSV() const { return GizmoDSV; }
+
 	const D3D11_VIEWPORT& GetViewportInfo() const { return ViewportInfo; }
 	uint32 GetWidth() const { return Width; }
 	uint32 GetHeight() const { return Height; }
@@ -167,8 +175,12 @@ private:
 
 	// CSM Resources
 	ID3D11Texture2D* CascadedShadowMapTexture = nullptr;
-	ID3D11ShaderResourceView* CascadedShadowMapSRV = nullptr;
+	ID3D11Texture2D* CascadedShadowMapColorTexture = nullptr;
+	ID3D11ShaderResourceView* CascadedShadowMapSRV = nullptr; 
+	ID3D11ShaderResourceView* CascadedShadowMapColorSRV = nullptr;
+	ID3D11ShaderResourceView* CascadedShadowMapSliceSRVs[MAX_CASCADES] = { nullptr };
 	ID3D11DepthStencilView* CascadedShadowMapDSVs[MAX_CASCADES] = { nullptr };
+	ID3D11RenderTargetView* CascadedShadowMapColorRTVs[MAX_CASCADES] = { nullptr };
 	
 	D3D11_VIEWPORT ViewportInfo = {};
 
@@ -178,6 +190,10 @@ private:
 	// Direct2D/DirectWrite factories
 	ID2D1Factory* D2DFactory = nullptr;
 	IDWriteFactory* DWriteFactory = nullptr;
+
+	// For Axis Gizmo mesh depth-test
+	ID3D11Texture2D* GizmoDepthTexture = nullptr;
+	ID3D11DepthStencilView* GizmoDSV = nullptr;
 
 	// Point Light Shadow 3-Tier System
 	static const UINT MaxLightsPerTier = 8; // Max lights per resolution tier

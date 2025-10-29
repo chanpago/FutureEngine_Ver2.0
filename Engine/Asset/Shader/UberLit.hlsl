@@ -11,7 +11,7 @@
 #define NUM_POINT_LIGHT 8
 #define NUM_SPOT_LIGHT 8
 #define ADD_ILLUM(a, b) { (a).Ambient += (b).Ambient; (a).Diffuse += (b).Diffuse; (a).Specular += (b).Specular; }
-#define MAX_CASCADES 4
+#define MAX_CASCADES 8
 
 static const float PI = 3.14159265f;
 
@@ -110,6 +110,8 @@ cbuffer ShadowMapConstants : register(b6)
     row_major float4x4 LightProjP[MAX_CASCADES]; // P_L'
     row_major float4x4 LightViewPInv[MAX_CASCADES]; // (V'_L)^(-1)
 
+    row_major float4x4 CameraClipToLightClip;
+    
     float4 ShadowParams;               // x=bias, y=slopeBias, z=sharpen, w=reserved
     float4 CascadeSplits;
     float3 LightDirWS;                 // 월드공간 광원 방향
@@ -139,6 +141,9 @@ struct FSpotShadowAtlasEntry
     row_major float4x4 Proj;
     float2 AtlasScale;
     float2 AtlasOffset;
+    row_major float4x4 PSMMatrix;  // PSM: World → Light Clip
+    uint bUsePSM;                   // 1 if PSM enabled
+    float3 Padding;
 };
 StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 
@@ -454,8 +459,78 @@ inline float ShadowPCF2DArray(Texture2DArray DepthTex, SamplerComparisonState Co
     
     return Shadow;
 }*/
+
+float SampleShadowCSM(float3 worldPos, float viewDepth)
+{
+    // Select Cascade
+    int CascadeIndex = 0;
+    if (viewDepth > CascadeSplits.x)
+        CascadeIndex = 1;
+    if (viewDepth > CascadeSplits.y)
+        CascadeIndex = 2;
+    if (viewDepth > CascadeSplits.z)
+        CascadeIndex = 3;
+       
+    // World to Light Space
+    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[CascadeIndex]);
+    LightSpacePos = mul(LightSpacePos, LightProjP[CascadeIndex]);
+    LightSpacePos.xyz /= LightSpacePos.w;
+        
+    // NDC[-1.1] to UV[0,1]
+    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+    ShadowUV.y = 1.0f - ShadowUV.y;
+    float CurrentDepth = LightSpacePos.z;
+        
+    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+        return 1.0f;
+        
+    // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
+    // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
+        
+    float bias = ShadowParams.x;
+    
+    if (bUsePCF)
+    {
+        // ---------------- 3x3 PCF FILTER ----------------
+        uint Width, Height, Layers;
+        CascadedShadowMapTexture.GetDimensions(Width, Height, Layers);
+        float2 TexelSize = 1.0f / float2(Width, Height);
+
+        float ShadowSum = 0.0f;
+        [unroll] for (int dy = -1; dy <= 1; ++dy)
+        [unroll] for (int dx = -1; dx <= 1; ++dx)
+        {
+            float2 Offset = float2(dx, dy) * TexelSize;
+            ShadowSum += CascadedShadowMapTexture.SampleCmpLevelZero(
+            SamplerPCF, float3(ShadowUV + Offset, CascadeIndex),
+            CurrentDepth - bias);
+        }
+
+        return ShadowSum / 9.0f;
+    }
+    else if (bUseVSM)
+    {
+        // ---------------- VARIANCE SHADOW MAPPING ----------------
+        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
+        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
+        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
+    }
+    else
+    {
+        // ---------------- HARD COMPARE (TMP) ----------------
+        float ShadowMapDepth = CascadedShadowMapTexture.SampleLevel(SamplerLinearClamp, float3(ShadowUV, CascadeIndex), 0).r;
+        return (CurrentDepth - bias) <= ShadowMapDepth ? 1.0f : 0.0f;
+    }
+}
+
 float PSM_Visibility(float3 worldPos)
 {
+    if (bUseCSM != 0)
+    {
+        float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
+        return SampleShadowCSM(worldPos, ViewDepth);
+    }
+    
     // 픽셀의 View 공간 깊이를 미리 계산 (CSM 인덱스 판별용)
     float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
     
@@ -480,40 +555,12 @@ float PSM_Visibility(float3 worldPos)
 
     // 경계 밖이면 취향에 따라 1(밝게) 또는 0(그림자) 처리. 보통 1이 안전.
     if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
-
-    // 2) 수동 PCF (3x3). 필요시 5x5로 확장 가능.
-    const int R = 1;
-    float sum = 0.0;
-    [unroll] for (int dy=-R; dy<=R; ++dy)
-        [unroll] for (int dx=-R; dx<=R; ++dx)
-        {
-            float2 o  = float2(dx, dy) * gShadowTexel;
-            float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
-
-            // 비교방향: normal (<) vs inverted (>)
-            // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
-            // LVP: 샘플링 시 바이어스 적용
-            bool lit;
-            if (bUsePSM == 1)
-            {
-                // PSM: 월드 공간 바이어스가 ShadowMap.hlsl에 이미 적용됨
-                lit = (bInvertedLight == 0) ? (z <= dz) : (z >= dz);
-            }
-            else
-            {
-                // LVP: 샘플링 시 바이어스 적용
-                lit = (bInvertedLight == 0)
-                    ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
-                    : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
-            }
-            sum += lit ? 1.0 : 0.0;
-        }
-/*
+    
+    /*
 pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “식별자 이름” 문제. HLSL(특히 FX 문법 인식)에서 pass는 예약어로 취급되는 경우가 있어서 변수 이름으로 쓰면 파서가 에러
 우연찮게 vs로 한번보자는 생각이들어서 봤었는데, vs는 여기에 빨간줄 뜨더라.. 갓 vs..
 이거 때문에 3시간 날렸다.. 찾기도 어려운 HLSL 조심 또 조심....
  */
-
     
     // World Position을 Light 공간으로 변환
     float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[0]);
@@ -532,33 +579,8 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     
     // 현재 픽셀의 Light 공간 Depth
     float CurrentDepth = LightSpacePos.z;
-    
-    if (bUseCSM != 0)
-    {
-        int CascadeIndex = 0;
-        if (ViewDepth > CascadeSplits.x)    CascadeIndex = 1;
-        if (ViewDepth > CascadeSplits.y)    CascadeIndex = 2;
-        if (ViewDepth > CascadeSplits.z)    CascadeIndex = 3;
-        
-        float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[CascadeIndex]);
-        LightSpacePos = mul(LightSpacePos, LightProjP[CascadeIndex]);
-        LightSpacePos.xyz /= LightSpacePos.w;
-        
-        float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
-        ShadowUV.y = 1.0f - ShadowUV.y;
-        
-        if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
-            return 1.0f;
-        
-        float CurrentDepth = LightSpacePos.z;
-        // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
-        // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
-        
-        static const float VSM_MipBias = 1.25f; // Increase for softer shadows
-        float2 Moments = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).rg;
-        return CalculateVSM(Moments, CurrentDepth, VSM_MipBias);
-    }
-    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
+
+    if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
         return ShadowBinary2D(ShadowMapTexture, SamplerWrap, ShadowUV, CurrentDepth - ShadowParams[0]);
@@ -588,8 +610,20 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
 
     // Transform world position to spot light clip space
-    float4 clip = mul(float4(worldPos, 1.0f), entry.View);
-    clip = mul(clip, entry.Proj);
+    float4 clip;
+    if (entry.bUsePSM == 1)
+    {
+        // PSM: World → Light View → Spot Perspective → Crop
+        // entry.PSMMatrix = lightView * spotPerspective * crop (전체 변환)
+        clip = mul(float4(worldPos, 1.0f), entry.PSMMatrix);
+    }
+    else
+    {
+        // Standard: World → View → Proj
+        clip = mul(float4(worldPos, 1.0f), entry.View);
+        clip = mul(clip, entry.Proj);
+    }
+    
     if (clip.w <= 0.0f)
         return 1.0f; // behind the light frustum
 
@@ -611,9 +645,9 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
         return 1.0f;
 
     float currentDepth = saturate(clip.z * invW);
-    // float bias = SpotShadowBias; // CPU sets default; could be exposed per-light
-
-    float bias = 0.0001f;
+    
+    // Use proper bias value (matching directional light)
+    float bias = 0.00005f;  // Shadow acne 방지
 
     // PCF path (3x3) using hardware comparison sampler
     if (bUsePCF != 0)

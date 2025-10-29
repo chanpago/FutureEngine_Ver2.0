@@ -24,6 +24,9 @@ UGizmo::UGizmo()
 	* @brief Translation Setting
 	*/
 	const float ScaleT = TranslateCollisionConfig.Scale;
+	Primitives[0].VertexShader = URenderer::GetInstance().GetGizmoVertexShader();
+	Primitives[0].PixelShader = URenderer::GetInstance().GetGizmoPixelShader();
+	Primitives[0].InputLayout = URenderer::GetInstance().GetGizmoInputLayout();
 	Primitives[0].VertexBuffer = ResourceManager.GetVertexbuffer(EPrimitiveType::Arrow);
 	Primitives[0].NumVertices = ResourceManager.GetNumVertices(EPrimitiveType::Arrow);
 	Primitives[0].Topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -33,6 +36,9 @@ UGizmo::UGizmo()
 	/* *
 	* @brief Rotation Setting
 	*/
+	Primitives[1].VertexShader = URenderer::GetInstance().GetGizmoVertexShader();
+	Primitives[1].PixelShader = URenderer::GetInstance().GetGizmoPixelShader();
+	Primitives[1].InputLayout = URenderer::GetInstance().GetGizmoInputLayout();
 	Primitives[1].VertexBuffer = ResourceManager.GetVertexbuffer(EPrimitiveType::Ring);
 	Primitives[1].NumVertices = ResourceManager.GetNumVertices(EPrimitiveType::Ring);
 	Primitives[1].Topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -42,6 +48,9 @@ UGizmo::UGizmo()
 	/* *
 	* @brief Scale Setting
 	*/
+	Primitives[2].VertexShader = URenderer::GetInstance().GetGizmoVertexShader();
+	Primitives[2].PixelShader = URenderer::GetInstance().GetGizmoPixelShader();
+	Primitives[2].InputLayout = URenderer::GetInstance().GetGizmoInputLayout();
 	Primitives[2].VertexBuffer = ResourceManager.GetVertexbuffer(EPrimitiveType::CubeArrow);
 	Primitives[2].NumVertices = ResourceManager.GetNumVertices(EPrimitiveType::CubeArrow);
 	Primitives[2].Topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -98,6 +107,19 @@ void UGizmo::RenderGizmo(UCamera* InCamera)
 	}
 
 	URenderer& Renderer = URenderer::GetInstance();
+	
+	// Save current render targets and depth stencil view
+	ID3D11RenderTargetView* pOrigRTV = nullptr;
+	ID3D11DepthStencilView* pOrigDSV = nullptr;
+	Renderer.GetDeviceContext()->OMGetRenderTargets(1, &pOrigRTV, &pOrigDSV);
+
+	// Set main RTV and Gizmo DSV
+	ID3D11RenderTargetView* mainRTV = Renderer.GetRenderTargetView(); // assume main rtv
+	Renderer.GetDeviceContext()->OMSetRenderTargets(1, &mainRTV, Renderer.GetDeviceResources()->GetGizmoDSV());
+
+	// Clear the Gizmo DSV
+	Renderer.GetDeviceContext()->ClearDepthStencilView(Renderer.GetDeviceResources()->GetGizmoDSV(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+	
 	const int Mode = static_cast<int>(GizmoMode);
 	auto& P = Primitives[Mode];
 	P.Location = TargetComponent->GetWorldLocation();
@@ -129,6 +151,11 @@ void UGizmo::RenderGizmo(UCamera* InCamera)
 	P.Rotation =  FQuaternion::FromAxisAngle(FVector::RightVector(), 90.0f * (PI / 180.0f)) * LocalRot;
 	P.Color = ColorFor(EGizmoDirection::Up);
 	Renderer.RenderEditorPrimitive(P, RenderState);
+
+	// Restore original render targets and depth stencil view
+	Renderer.GetDeviceContext()->OMSetRenderTargets(1, &pOrigRTV, pOrigDSV);
+	SafeRelease(pOrigRTV);
+	SafeRelease(pOrigDSV);
 }
 
 void UGizmo::ChangeGizmoMode()
@@ -181,7 +208,12 @@ FVector4 UGizmo::ColorFor(EGizmoDirection InAxis) const
 	//UE_LOG("InAxis: %d, Idx: %d, Dir: %d, base color: %.f, %.f, %.f, bHighLight: %d", InAxis, Idx, GizmoDirection, BaseColor.X, BaseColor.Y, BaseColor.Z, bIsHighlight);
 
 	if (bIsDragging)
-		return BaseColor;
+	{
+		if (bIsHighlight)
+			return FVector4(1, 1, 0, 1);
+		else
+			return BaseColor;
+	}
 	else
 		return Paint;
 }
