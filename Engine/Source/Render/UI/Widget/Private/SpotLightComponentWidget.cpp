@@ -167,6 +167,18 @@ void USpotLightComponentWidget::RenderWidget()
     }
     
     ImGui::PopStyleColor(3);
+    
+    // Cast Shadows (PSM) Checkbox
+    ImGui::Separator();
+    bool bCastShadows = SpotLightComponent->GetCastShadows();
+    if (ImGui::Checkbox("Cast Shadows (PSM)", &bCastShadows))
+    {
+        SpotLightComponent->SetCastShadows(bCastShadows);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("그림자 활성화 (논문 기반 PSM 사용)\nON: PSM (Perspective Shadow Maps) - 카메라 post-perspective 공간에서 생성\nOFF: Standard Shadow - 일반 spotlight shadow");
+    }
 
     // Shadow Map Preview
     if (ImGui::CollapsingHeader("Shadow Map Preview"))
@@ -177,7 +189,7 @@ void USpotLightComponentWidget::RenderWidget()
             // Controls
             static int Size = 256;
             ImGui::SliderInt("Size", &Size, 64, 1024);
-            static float MinDepth = 0.0f;
+            static float MinDepth = 0.99f;
             static float MaxDepth = 1.0f;
             static float Gamma    = 1.2f;
             static bool  Invert   = false;

@@ -133,7 +133,7 @@ void UDirectionalLightComponent::RenderLightDirectionGizmo(UCamera* InCamera)
 
     FRenderState RenderState;
     RenderState.FillMode = EFillMode::Solid;
-    RenderState.CullMode = ECullMode::None;
+    RenderState.CullMode = ECullMode::Front;
 
     URenderer::GetInstance().RenderEditorPrimitive(LightDirectionArrow, RenderState);
 }

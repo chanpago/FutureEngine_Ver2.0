@@ -110,6 +110,8 @@ cbuffer ShadowMapConstants : register(b6)
     row_major float4x4 LightProjP[MAX_CASCADES]; // P_L'
     row_major float4x4 LightViewPInv[MAX_CASCADES]; // (V'_L)^(-1)
 
+    row_major float4x4 CameraClipToLightClip;
+    
     float4 ShadowParams;               // x=bias, y=slopeBias, z=sharpen, w=reserved
     float4 CascadeSplits;
     float3 LightDirWS;                 // 월드공간 광원 방향
@@ -139,6 +141,9 @@ struct FSpotShadowAtlasEntry
     row_major float4x4 Proj;
     float2 AtlasScale;
     float2 AtlasOffset;
+    row_major float4x4 PSMMatrix;  // PSM: World → Light Clip
+    uint bUsePSM;                   // 1 if PSM enabled
+    float3 Padding;
 };
 StructuredBuffer<FSpotShadowAtlasEntry> SpotShadowAtlasEntries : register(t13);
 
@@ -409,32 +414,32 @@ float PSM_Visibility(float3 worldPos)
     if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
 
     // 2) 수동 PCF (3x3). 필요시 5x5로 확장 가능.
-    const int R = 1;
-    float sum = 0.0;
-    [unroll] for (int dy=-R; dy<=R; ++dy)
-        [unroll] for (int dx=-R; dx<=R; ++dx)
-        {
-            float2 o  = float2(dx, dy) * gShadowTexel;
-            float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
-
-            // 비교방향: normal (<) vs inverted (>)
-            // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
-            // LVP: 샘플링 시 바이어스 적용
-            bool lit;
-            if (bUsePSM == 1)
-            {
-                // PSM: 월드 공간 바이어스가 ShadowMap.hlsl에 이미 적용됨
-                lit = (bInvertedLight == 0) ? (z <= dz) : (z >= dz);
-            }
-            else
-            {
-                // LVP: 샘플링 시 바이어스 적용
-                lit = (bInvertedLight == 0)
-                    ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
-                    : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
-            }
-            sum += lit ? 1.0 : 0.0;
-        }
+    //const int R = 1;
+    //float sum = 0.0;
+    //[unroll] for (int dy=-R; dy<=R; ++dy)
+    //    [unroll] for (int dx=-R; dx<=R; ++dx)
+    //    {
+    //        float2 o  = float2(dx, dy) * gShadowTexel;
+    //        float  dz = ShadowMapTexture.SampleLevel(SamplerShadow, uv + o, 0).r;
+//
+    //        // 비교방향: normal (<) vs inverted (>)
+    //        // PSM: 베이킹 시 이미 바이어스 적용 → 직접 비교
+    //        // LVP: 샘플링 시 바이어스 적용
+    //        bool lit;
+    //        if (bUsePSM == 1)
+    //        {
+    //            // PSM: 월드 공간 바이어스가 ShadowMap.hlsl에 이미 적용됨
+    //            lit = (bInvertedLight == 0) ? (z <= dz) : (z >= dz);
+    //        }
+    //        else
+    //        {
+    //            // LVP: 샘플링 시 바이어스 적용
+    //            lit = (bInvertedLight == 0)
+    //                ? ((z - ShadowParams.x) <= dz)      // normal depth (LESS)
+    //                : ((z + ShadowParams.x) >= dz);     // reversed depth (GREATER)
+    //        }
+    //        sum += lit ? 1.0 : 0.0;
+    //    }
 /*
 pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “식별자 이름” 문제. HLSL(특히 FX 문법 인식)에서 pass는 예약어로 취급되는 경우가 있어서 변수 이름으로 쓰면 파서가 에러
 우연찮게 vs로 한번보자는 생각이들어서 봤었는데, vs는 여기에 빨간줄 뜨더라.. 갓 vs..
@@ -490,6 +495,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
         // Classic depth compare
         float ShadowMapDepth = ShadowMapTexture.Sample(SamplerWrap, ShadowUV).r;
         float Shadow = (CurrentDepth - ShadowParams[0]) > ShadowMapDepth ? 0.0f : 1.0f;
+        //float Shadow = (CurrentDepth - 0) > ShadowMapDepth ? 0.0f : 1.0f;
         return Shadow;
     }
     else if (bUsePCF != 0)
@@ -513,6 +519,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
                 // 아니라면 false -> 0.0 반환 (그림자)
      
                 Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - ShadowParams[0]);
+                //Shadow += ShadowMapTexture.SampleCmpLevelZero(SamplerPCF, ShadowUV + Offset, CurrentDepth - 0.0f);
             }
         }
         // 9개 평균 계산하여 부드러운 그림자 값
@@ -531,6 +538,7 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
 
         // Clamp depth into [0,1] and apply small bias
         float z = saturate(CurrentDepth - ShadowParams[0]);
+        //float z = saturate(CurrentDepth - 0);
         float m1 = Moments.x;
         float m2 = Moments.y;
 
@@ -559,8 +567,20 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
     FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
 
     // Transform world position to spot light clip space
-    float4 clip = mul(float4(worldPos, 1.0f), entry.View);
-    clip = mul(clip, entry.Proj);
+    float4 clip;
+    if (entry.bUsePSM == 1)
+    {
+        // PSM: World → Light View → Spot Perspective → Crop
+        // entry.PSMMatrix = lightView * spotPerspective * crop (전체 변환)
+        clip = mul(float4(worldPos, 1.0f), entry.PSMMatrix);
+    }
+    else
+    {
+        // Standard: World → View → Proj
+        clip = mul(float4(worldPos, 1.0f), entry.View);
+        clip = mul(clip, entry.Proj);
+    }
+    
     if (clip.w <= 0.0f)
         return 1.0f; // behind the light frustum
 
@@ -582,9 +602,9 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
         return 1.0f;
 
     float currentDepth = saturate(clip.z * invW);
-    // float bias = SpotShadowBias; // CPU sets default; could be exposed per-light
-
-    float bias = 0.0001f;
+    
+    // Use proper bias value (matching directional light)
+    float bias = 0.00005f;  // Shadow acne 방지
 
     // PCF path (3x3) using hardware comparison sampler
     if (bUsePCF != 0)

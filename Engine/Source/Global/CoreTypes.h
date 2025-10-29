@@ -180,7 +180,8 @@ struct FShadowMapConstants
 	FMatrix LightViewP[MAX_CASCADES];    // V_L'
 	FMatrix LightProjP[MAX_CASCADES];    // P_L'
 	FMatrix LightViewPInv[MAX_CASCADES];  // (V'_L)^(-1)
-	
+
+	FMatrix CameraClipToLightClip;
 	FVector4 ShadowParams; // x: depthBias, y: (reserved)
 	FVector4 CascadeSplits;
 	FVector LightDirWS;                   // 월드공간 "표면→광원" 단위벡터
@@ -225,8 +226,11 @@ struct FSpotShadowConstants
 // Per-spot shadow atlas entry uploaded as a structured buffer
 struct FSpotShadowAtlasEntry
 {
-    FMatrix View;         // spot light view matrix
-    FMatrix Proj;         // spot light projection matrix
+    FMatrix View;         // spot light view matrix (or PSM light view)
+    FMatrix Proj;         // spot light projection matrix (or PSM light proj)
     FVector2 AtlasScale;  // scale to map local [0,1] UV into atlas
     FVector2 AtlasOffset; // offset to map local [0,1] UV into atlas
+    FMatrix PSMMatrix;    // PSM: World → Light Clip (CameraClipToLightClip)
+    uint32  bUsePSM;      // 1 if PSM enabled, 0 otherwise
+    FVector Padding;      // padding for 16-byte alignment
 };

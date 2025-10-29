@@ -19,6 +19,8 @@ cbuffer PSMConstants  : register(b6)
     row_major float4x4 LightViewP[MAX_CASCADES]; // V_L'
     row_major float4x4 LightProjP[MAX_CASCADES]; // P_L'
     row_major float4x4 LightViewPInv[MAX_CASCADES]; // (V'_L)^(-1)
+
+    row_major float4x4 CameraClipToLightClip;
     
     float4 ShadowParams;               // // x=a(ShadowBias), y=b(ShadowSlopeBias), z=Sharpen(옵션), w=Reserved
     float4 CascadeSplits;
@@ -121,48 +123,28 @@ VS_OUTPUT mainVS(VS_INPUT input)
     
     if (bUsePSM == 1)
     {
-        // --- 월드공간 바이어스 ---
-        float  a = ShadowParams.x;                    // ShadowBias
-        float  b = ShadowParams.y;                    // ShadowSlopeBias
-        float4 camClip_pre = mul(mul(worldPos, EyeView), EyeProj);
-        float  w_cam       = max(1e-6, camClip_pre.w);
-
-        float biasDist = 0.0f;
-        // 월드 텍셀 길이 근사
-        if (bUsePSM == 0)
-        {
-            // LVP (Light View Projection)
-            float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
-            // ★ LVP에도 L_texel 상한선 설정 (먼 거리에서 bias 폭발 방지)
-            L_texel = min(L_texel, 2.0);  // 최대 2 unit으로 제한
-            biasDist = a + b * L_texel;
-        }
-        else if (bUsePSM == 1)
-        {
-            // PSM (Perspective Shadow Maps)
-            float L_texel = ComputeWorldTexelLength(worldPos, w_cam);
-            // ★ L_texel에 상한선 설정
-            L_texel = min(L_texel, 1.0);  // 최대 1 unit으로 제한
-            biasDist = a + b * L_texel;
-        }
-
-        // 표면→광원 방향으로 전진(PSM 권장)
-        float3 PbiasedWS = worldPos.xyz + LightDirWS * biasDist;
-        float4 worldBiased = float4(PbiasedWS, 1.0);
-
-        // --- PSM 변환: World → Camera clip → NDC → Light view/proj ---
-        float4 eyeClip = mul(mul(worldBiased, EyeView), EyeProj);
-        float3 camNDC  = eyeClip.xyz / max(1e-6, eyeClip.w);
-        float4 ndcPos  = float4(camNDC, 1.0);
-
-        o.Position = mul(mul(ndcPos, LightViewP[0]), LightProjP[0]);
+        // --- PSM: lightView * warpPSM * spotPerspective * crop ---
+        // C++에서 PSMMatrix = lightView * spotPerspective * crop로 계산됨
+        // 셀이더에서는 World → PSMMatrix 변환만 수행
+        
+        // 바이어스 적용: 표면을 광원 방향으로 약간 이동
+        float  a = ShadowParams.x;  // ShadowBias
+        float3 biasDir = normalize(LightDirWS);  // "표면 → 광원" 방향
+        float3 biasedPos = worldPos.xyz + biasDir * a;
+        
+        // PSM 변환: World → Light View → Spot Perspective → Crop
+        // LightViewP[0] = lightView, LightProjP[0] = spotPerspective * crop
+        o.Position = mul(mul(float4(biasedPos, 1.0f), LightViewP[0]), LightProjP[0]);
     }
     else
     {
-        // Simple Ortho: World→Light 직접 변환
-        o.Position = mul(mul(worldPos, LightViewP[0]), LightProjP[0]);
-        
+        // Standard SpotLight Shadow: World→Light 직접 변환 (bias 적용)
+        float a = ShadowParams.x;
+        float3 biasDir = normalize(LightDirWS);  // "표면 → 광원" 방향
+        float3 biasedPos = worldPos.xyz + biasDir * a;
+        o.Position = mul(mul(float4(biasedPos, 1.0f), LightViewP[0]), LightProjP[0]);
     }
+    
     o.Depth = o.Position.z / o.Position.w;
     return o;
 }

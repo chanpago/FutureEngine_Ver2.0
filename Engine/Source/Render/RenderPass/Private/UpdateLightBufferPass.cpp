@@ -82,7 +82,7 @@ void FUpdateLightBufferPass::NewBakeShadowMap(FRenderingContext& Context)
     // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
     const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
     const EShadowFilterType FilterType = Context.ShadowFilterType;
-    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+    //UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
 
     // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
     ID3D11ShaderResourceView* NullSRV = nullptr;
@@ -144,7 +144,7 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
     // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
     const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
     const EShadowFilterType FilterType = Context.ShadowFilterType;
-    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+    //UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
 
     // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
     ID3D11ShaderResourceView* NullSRV = nullptr;
@@ -310,7 +310,7 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
     // +-+-+ CHECK CURRENT SETTINGS (PROJECTION + FILTER) +-+-+
     const EShadowProjectionType ProjectionType = Context.ShadowProjectionType;
     const EShadowFilterType FilterType = Context.ShadowFilterType;
-    UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
+    //UE_LOG("BakeShadowMap: Projection = %s, Filter = %s", ENUM_TO_STRING(ProjectionType), ENUM_TO_STRING(FilterType));
 
     // +-+-+ INITIALIZE RENDER TARGET / BASIC SETUP +-+-+
     ID3D11ShaderResourceView* NullSRV = nullptr;
@@ -348,9 +348,12 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
         }
     }
     const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
+    UE_LOG("BakeSpotShadowMap: NumSpotLights = %d", NumSpotLights);
+    
     if (NumSpotLights > 0)
     {
         ID3D11DepthStencilView* dsv = Renderer.GetDeviceResources()->GetSpotShadowMapDSV();
+        UE_LOG("SpotShadowMapDSV = %p", dsv);
         if (FilterType == EShadowFilterType::VSM)
         {
             ID3D11RenderTargetView* rtv = Renderer.GetDeviceResources()->GetSpotShadowMapColorRTV();
@@ -385,43 +388,83 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
             USpotLightComponent* SpotCaster = FilteredSpots[idx];
             if (!SpotCaster) { continue; }
 
-            // Compute view matrix from light basis
-            const FVector eye = SpotCaster->GetWorldLocation();
-            const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
-            const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
-            const FVector right = tmpUp.Cross(fwd).GetNormalized();
-            const FVector up = fwd.Cross(right);
+            FMatrix V, P, PSMMatrix = FMatrix::Identity();
+            
+            // Check if PSM is enabled for this spotlight
+            // ⚠️ PSM은 SpotLight에 부적합: 카메라 의존성 때문에 그림자가 불안정
+            // 권장: Cast Shadows를 꺼서 표준 Perspective Shadow Mapping 사용
+            if (SpotCaster->GetCastShadows())
+            {
+                // === PSM Path (Experimental - Camera Dependent!) ===
+                UE_LOG("SpotLight[%d] using PSM (Warning: Camera dependent!)", idx);
+                UCamera* MainCamera = Context.CurrentCamera;
+                if (!MainCamera) continue;
+                
+                FMatrix CameraView = MainCamera->GetCameraViewMatrix();
+                FMatrix CameraProj = MainCamera->GetCameraProjectionMatrix();
+                
+                const FVector eye = SpotCaster->GetWorldLocation();
+                const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
+                const float outerAngle = FVector::GetDegreeToRadian(SpotCaster->GetOuterConeAngle());
+                
+                BuildSpotLightPSM(CameraView, CameraProj, eye, fwd, outerAngle,
+                    (int)tileW, (int)tileH, V, P, PSMMatrix);
+                //UE_LOG("  LightPos=(%.2f,%.2f,%.2f) Dir=(%.2f,%.2f,%.2f)", eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
+            }
+            else
+            {
+                // === Standard Path (LVP) ===
+                UE_LOG("SpotLight[%d] using Standard Shadow (Camera Independent)", idx);
+                // Compute view matrix from light basis
+                const FVector eye = SpotCaster->GetWorldLocation();
+                const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
+                UE_LOG("  Light Pos=(%.2f, %.2f, %.2f), Fwd=(%.2f, %.2f, %.2f)",
+                    eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
+                const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+                const FVector right = tmpUp.Cross(fwd).GetNormalized();
+                const FVector up = fwd.Cross(right);
 
-            FMatrix V = FMatrix::Identity();
-            V.Data[0][0]=right.X; V.Data[0][1]=up.X; V.Data[0][2]=fwd.X;
-            V.Data[1][0]=right.Y; V.Data[1][1]=up.Y; V.Data[1][2]=fwd.Y;
-            V.Data[2][0]=right.Z; V.Data[2][1]=up.Z; V.Data[2][2]=fwd.Z;
-            V.Data[3][0]= -eye.Dot(right);
-            V.Data[3][1]= -eye.Dot(up);
-            V.Data[3][2]= -eye.Dot(fwd);
+                V = FMatrix::Identity();
+                V.Data[0][0]=right.X; V.Data[0][1]=up.X; V.Data[0][2]=fwd.X;
+                V.Data[1][0]=right.Y; V.Data[1][1]=up.Y; V.Data[1][2]=fwd.Y;
+                V.Data[2][0]=right.Z; V.Data[2][1]=up.Z; V.Data[2][2]=fwd.Z;
+                V.Data[3][0]= -eye.Dot(right);
+                V.Data[3][1]= -eye.Dot(up);
+                V.Data[3][2]= -eye.Dot(fwd);
 
-            // Perspective projection (row-vector LH)
-            const float fov = std::max(0.001f, SpotCaster->GetOuterConeAngle()) * 2.0f;
-            const float aspect = 1.0f;
-            const float zn = 0.1f;
-            const float zf = std::max(zn + 0.1f, SpotCaster->GetAttenuationRadius());
-            FMatrix P = FMatrix::Identity();
-            const float yScale = 1.0f / tanf(fov * 0.5f);
-            const float xScale = yScale / aspect;
-            P.Data[0][0] = xScale;
-            P.Data[1][1] = yScale;
-            P.Data[2][2] = zf / (zf - zn);
-            P.Data[3][2] = -zn * zf / (zf - zn);
-            P.Data[2][3] = 1.0f;
-            P.Data[3][3] = 0.0f;
+                // Perspective projection (row-vector LH)
+                const float fov = std::max(0.001f, SpotCaster->GetOuterConeAngle()) * 2.0f;
+                const float aspect = 1.0f;
+                const float zn = 0.1f;
+                const float zf = std::max(zn + 0.1f, SpotCaster->GetAttenuationRadius());
+                P = FMatrix::Identity();
+                const float yScale = 1.0f / tanf(fov * 0.5f);
+                const float xScale = yScale / aspect;
+                P.Data[0][0] = xScale;
+                P.Data[1][1] = yScale;
+                P.Data[2][2] = zf / (zf - zn);
+                P.Data[3][2] = -zn * zf / (zf - zn);
+                P.Data[2][3] = 1.0f;
+                P.Data[3][3] = 0.0f;
+            }
 
             // Update constant buffer used by shadow depth pass (b6 VS)
             FShadowMapConstants SpotCasterConsts = {};
+            
+            // PSM 경로일 때는 V와 P가 PSM 변환을 포함
+            // 일반 경로일 때는 V와 P가 표준 Light View/Proj
             SpotCasterConsts.LightViewP[0] = V;
             SpotCasterConsts.LightProjP[0] = P;
             SpotCasterConsts.LightViewPInv[0] = V.Inverse();
+            SpotCasterConsts.CameraClipToLightClip = PSMMatrix;  // PSM: World → Light Clip (전체 변환)
+            SpotCasterConsts.EyeView = Context.CurrentCamera ? Context.CurrentCamera->GetCameraViewMatrix() : FMatrix::Identity();
+            SpotCasterConsts.EyeProj = Context.CurrentCamera ? Context.CurrentCamera->GetCameraProjectionMatrix() : FMatrix::Identity();
             SpotCasterConsts.ShadowMapSize = FVector2(tileW, tileH);
-            SpotCasterConsts.ShadowParams = FVector4(0.0008f, 0, 0, 0);
+            SpotCasterConsts.ShadowParams = FVector4(SpotCaster->GetShadowBias(), SpotCaster->GetShadowSlopeBias(), 0, 0);
+            // LightDirWS: "표면 → 광원" 방향 (bias를 위해)
+            SpotCasterConsts.LightDirWS = -SpotCaster->GetForwardVector().GetNormalized();
+            SpotCasterConsts.bInvertedLight = 0;
+            SpotCasterConsts.bUsePSM = SpotCaster->GetCastShadows() ? 1 : 0;
             FRenderResourceFactory::UpdateConstantBufferData(PSMConstantBuffer, SpotCasterConsts);
 
             // Calculate atlas tile viewport
@@ -466,6 +509,9 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
             entry.Proj = P;
             entry.AtlasScale = FVector2(std::max(0.0f, sx - 2.0f * padU), std::max(0.0f, sy - 2.0f * padV));
             entry.AtlasOffset = FVector2(ox + padU, oy + padV);
+            entry.PSMMatrix = PSMMatrix;  // PSM: World → Light Clip
+            entry.bUsePSM = SpotCaster->GetCastShadows() ? 1 : 0;
+            entry.Padding = FVector(0, 0, 0);
             // Write at the same index used by clustered lighting for this spotlight
             Entries[idx] = entry;
         }
@@ -1032,7 +1078,7 @@ void FUpdateLightBufferPass::BakeShadowMap(FRenderingContext& Context)
                 PSM.LightProjP[0] = P_L_prime;
                 PSM.LightViewPInv[0] = LightViewPInv;
 
-            
+                
                 PSM.ShadowParams = FVector4(Light->GetShadowBias(), Light->GetShadowSlopeBias(), 0, 0);
              
                 PSM.LightDirWS      = LdirWS;
@@ -1390,6 +1436,8 @@ void FUpdateLightBufferPass::UpdateShadowCasterConstants(EShadowProjectionType P
         CasterConsts.LightProjP[0] = InShadowData.LightProjs[0];
         CasterConsts.LightViewPInv[0] = InShadowData.LightViews[0].Inverse(); // L_texel 계산에 안 쓰지만 채워두면 안전
 
+        //CasterConsts.CameraClipToLightClip = FMatrix::Identity();
+        
         CasterConsts.ShadowParams = FVector4(0.002f, 0, 0, 0);
 
         CasterConsts.LightDirWS = (-Light->GetForwardVector()).GetNormalized();
@@ -1444,6 +1492,141 @@ void FUpdateLightBufferPass::CalculateCascadeSplits(FVector4& OutSplits, const U
     }
 }
 
+void FUpdateLightBufferPass::BuildSpotLightPSM(const FMatrix& EyeView, const FMatrix& EyeProj,
+    const FVector& SpotLightPosWS, const FVector& SpotLightDirWS,
+    float SpotOuterAngle, int ShadowMapWidth, int ShadowMapHeight,
+    FMatrix& OutLightView, FMatrix& OutLightProj, FMatrix& OutPSMMatrix)
+{
+    // Standard PSM formula: lightView * warpPSM * spotPerspective * crop
+    // 1. lightView: World → Light View Space (광원 기준)
+    // 2. warpPSM: 카메라 frustum을 고려한 워프 변환
+    // 3. spotPerspective: SpotLight의 원근 투영
+    // 4. crop (optional): Light space에서 tight bounds
+    
+    // === 1. Light View Matrix (World → Light View) ===
+    const FVector eye = SpotLightPosWS;
+    const FVector fwd = SpotLightDirWS.GetNormalized();
+    const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
+    const FVector right = tmpUp.Cross(fwd).GetNormalized();
+    const FVector up = fwd.Cross(right);
+    
+    FMatrix lightView = FMatrix::Identity();
+    lightView.Data[0][0]=right.X; lightView.Data[0][1]=up.X; lightView.Data[0][2]=fwd.X;
+    lightView.Data[1][0]=right.Y; lightView.Data[1][1]=up.Y; lightView.Data[1][2]=fwd.Y;
+    lightView.Data[2][0]=right.Z; lightView.Data[2][1]=up.Z; lightView.Data[2][2]=fwd.Z;
+    lightView.Data[3][0]= -eye.Dot(right);
+    lightView.Data[3][1]= -eye.Dot(up);
+    lightView.Data[3][2]= -eye.Dot(fwd);
+    
+    
+    // === 3. Warp PSM Matrix (카메라 기준 워프) ===
+    // PSM 핵심: Light View Space를 카메라 방향으로 재정렬하고 원근 워프
+    FMatrix EyeViewInv = EyeView.Inverse();
+    FMatrix EyeProjInv = EyeProj.Inverse();
+    
+    // 카메라 위치를 Light View Space로 변환
+    FVector4 cameraWorldPos4 = FMatrix::VectorMultiply(FVector4(0, 0, 0, 1.0f), EyeViewInv);
+    FVector cameraWorldPos(cameraWorldPos4.X, cameraWorldPos4.Y, cameraWorldPos4.Z);
+    FVector4 cameraLightViewPos4 = FMatrix::VectorMultiply(FVector4(cameraWorldPos, 1.0f), lightView);
+    FVector cameraLightViewPos(cameraLightViewPos4.X, cameraLightViewPos4.Y, cameraLightViewPos4.Z);
+    
+    float distToCamera = cameraLightViewPos.Length();
+    
+    UE_LOG("︠ PSM Camera in Light Space: (%.2f, %.2f, %.2f), dist=%.2f",
+        cameraLightViewPos.X, cameraLightViewPos.Y, cameraLightViewPos.Z, distToCamera);
+    
+    // WarpPSM: Light View Space를 카메라 방향 기준으로 회전한 후 원근 투영
+    // 1) 카메라 방향으로 좌표계 회전 (부영한 경우 생략)
+    FVector lightToCamDir = cameraLightViewPos.GetNormalized();
+    
+    // 2) 카메라까지의 거리를 기준으로 near/far 계산
+    // n은 광원에 가까운 면, f는 카메라 넘어 씨에까지
+    float n = std::max(0.5f, distToCamera * 0.1f);   // near: 광원에서 10% 거리
+    float f = std::max(n * 2.0f, distToCamera * 2.0f);  // far: 카메라 너머2배 거리
+    
+    // 3) 원근 투영 행렬 (DirectX LH)
+    // 주의: warpPSM의 FOV는 적당히 넓게 (카메라 frustum을 다 커버)
+    // 너무 좌우면 aliasing 감소 효과 저하, 너무 많으면 왜곡 심함
+    float warpFOV = FVector::GetDegreeToRadian(120.0f);  // 60도 (spotPerspective보다 약간 넓게)
+    float warpScale = 1.0f / tanf(warpFOV * 0.5f);
+    
+    FMatrix warpPSM = FMatrix::Identity();
+    warpPSM.Data[0][0] = warpScale;
+    warpPSM.Data[1][1] = warpScale;
+    warpPSM.Data[2][2] = f / (f - n);
+    warpPSM.Data[3][2] = -n * f / (f - n);
+    warpPSM.Data[2][3] = 1.0f;  // perspective divide 활성화
+    warpPSM.Data[3][3] = 0.0f;
+    
+    // === 4. Camera Frustum Bounds in Warped Space ===
+    // Camera frustum을 lightView * warpPSM 공간으로 변환하여 crop 계산
+    FVector ndcCorners[8] = {
+        {-1,-1, 0}, { 1,-1, 0}, {-1, 1, 0}, { 1, 1, 0},  // near plane
+        {-1,-1, 1}, { 1,-1, 1}, {-1, 1, 1}, { 1, 1, 1}   // far plane
+    };
+    
+    FVector minWarped(+FLT_MAX, +FLT_MAX, +FLT_MAX);
+    FVector maxWarped(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    
+    for (int i = 0; i < 8; ++i)
+    {
+        // NDC → Camera View Space
+        FVector4 clipSpace = FVector4(ndcCorners[i], 1.0f);
+        FVector4 viewSpace = FMatrix::VectorMultiply(clipSpace, EyeProjInv);
+        if (fabsf(viewSpace.W) > 1e-6f) {
+            viewSpace.X /= viewSpace.W;
+            viewSpace.Y /= viewSpace.W;
+            viewSpace.Z /= viewSpace.W;
+            viewSpace.W = 1.0f;
+        }
+        
+        // Camera View → World Space
+        FVector4 worldSpace = FMatrix::VectorMultiply(viewSpace, EyeViewInv);
+        
+        // World → Light View Space
+        FVector4 lightViewSpace = FMatrix::VectorMultiply(worldSpace, lightView);
+        
+        // Light View → Warped Space (warpPSM 적용 후 perspective divide)
+        FVector4 warpedClip = FMatrix::VectorMultiply(lightViewSpace, warpPSM);
+        if (fabsf(warpedClip.W) > 1e-6f) {
+            FVector warpedNDC(
+                warpedClip.X / warpedClip.W,
+                warpedClip.Y / warpedClip.W,
+                warpedClip.Z / warpedClip.W
+            );
+            
+            minWarped.X = std::min(minWarped.X, warpedNDC.X);
+            minWarped.Y = std::min(minWarped.Y, warpedNDC.Y);
+            minWarped.Z = std::min(minWarped.Z, warpedNDC.Z);
+            maxWarped.X = std::max(maxWarped.X, warpedNDC.X);
+            maxWarped.Y = std::max(maxWarped.Y, warpedNDC.Y);
+            maxWarped.Z = std::max(maxWarped.Z, warpedNDC.Z);
+        }
+    }
+    
+    UE_LOG("  PSM Warped Frustum NDC: min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f)",
+        minWarped.X, minWarped.Y, minWarped.Z, maxWarped.X, maxWarped.Y, maxWarped.Z);
+    
+    // === 5. Crop Matrix (Warped Space에서 tight fitting) ===
+    float centerX = (minWarped.X + maxWarped.X) * 0.5f;
+    float centerY = (minWarped.Y + maxWarped.Y) * 0.5f;
+    float scaleX = 2.0f / std::max(0.001f, maxWarped.X - minWarped.X);
+    float scaleY = 2.0f / std::max(0.001f, maxWarped.Y - minWarped.Y);
+    
+    FMatrix crop = FMatrix::Identity();
+    crop.Data[0][0] = scaleX;
+    crop.Data[1][1] = scaleY;
+    crop.Data[3][0] = -centerX * scaleX;
+    crop.Data[3][1] = -centerY * scaleY;
+    
+    // === Final PSM Matrix: lightView * warpPSM * crop ===
+    // warpPSM이 원근 워프를 통해 카메라 기준 해상도 재분배
+    // spotPerspective는 제거하고 warpPSM만 사용 (중복 방지)
+    OutLightView = lightView;
+    OutLightProj = warpPSM * crop;
+    OutPSMMatrix = lightView * warpPSM * crop;
+}
+
 void FUpdateLightBufferPass::Release()
 {
     // 셀이더는 Renderer가 관리하므로 여기서 해제하지 않음
@@ -1453,7 +1636,6 @@ void FUpdateLightBufferPass::Release()
     
     // Light Camera 상수 버퍼 해제
     SafeRelease(LightCameraConstantBuffer);
-    SafeRelease(SpotShadowAtlasSRV);
     SafeRelease(SpotShadowAtlasStructuredBuffer);
     SafeRelease(PointShadowCubeIndexSRV);
     SafeRelease(PointShadowCubeIndexStructuredBuffer);

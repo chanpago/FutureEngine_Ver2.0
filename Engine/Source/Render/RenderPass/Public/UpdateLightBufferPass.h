@@ -55,6 +55,12 @@ private:
 	
 	void BakeShadowMap(FRenderingContext& Context);
 	void RenderPrimitive(class UStaticMeshComponent* MeshComp);
+	
+	// PSM for SpotLight: transform light to post-perspective space and setup shadow
+	void BuildSpotLightPSM(const FMatrix& EyeView, const FMatrix& EyeProj,
+		const FVector& SpotLightPosWS, const FVector& SpotLightDirWS,
+		float SpotOuterAngle, int ShadowMapWidth, int ShadowMapHeight,
+		FMatrix& OutLightView, FMatrix& OutLightProj, FMatrix& OutPSMMatrix);
 
 	// Helper Functions
 	void CalculateShadowMatrices(EShadowProjectionType ProjType, FRenderingContext& Context, FShadowCalculationData& OutShadowData);

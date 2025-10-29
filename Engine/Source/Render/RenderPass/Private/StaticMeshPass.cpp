@@ -71,8 +71,9 @@ void FStaticMeshPass::Execute(FRenderingContext& Context)
 
 			ShadowConsts.LightViewP[0] = LightBufferPass->GetLightViewMatrix();
 			ShadowConsts.LightProjP[0] = LightBufferPass->GetLightProjectionMatrix();
-			ShadowConsts.LightViewPInv[0] = ShadowConsts.LightViewP[0].Inverse();
-
+				ShadowConsts.LightViewPInv[0] = ShadowConsts.LightViewP[0].Inverse();
+				ShadowConsts.CameraClipToLightClip = FMatrix::Identity();
+				
 			ShadowConsts.ShadowParams = FVector4(0.0008f, 0.0f, 0.0f, 0.0f);
 			FVector LdirWS = (-Context.DirectionalLights[0]->GetForwardVector()).GetNormalized();
 			ShadowConsts.LightDirWS = LdirWS;
