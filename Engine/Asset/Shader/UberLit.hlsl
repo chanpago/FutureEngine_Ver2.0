@@ -28,6 +28,11 @@ struct FDirectionalLightInfo
     float4 Color;
     float3 Direction;
     float Intensity;
+
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
 };
 
 struct FPointLightInfo
@@ -37,6 +42,12 @@ struct FPointLightInfo
     float Intensity;
     float Range;
     float DistanceFalloffExponent;
+
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
+    
     float2 Padding;
 };
 
@@ -51,6 +62,11 @@ struct FSpotLightInfo
     float OuterConeAngle;
     float AngleFalloffExponent;
     float3 Direction;
+
+    float ResolutionScale;
+    float Bias;
+    float SlopeBias;
+    float Sharpen;
 };
 
 // reflectance와 곱해지기 전
@@ -154,6 +170,8 @@ StructuredBuffer<uint> PointShadowCubeIndices : register(t15);
 Texture2DArray PointShadow2DArray : register(t16);
 // Moments 2D array for VSM (R32G32_FLOAT)
 Texture2DArray PointShadowMoments2DArray : register(t17);
+
+float3 SafeNormalize3(float3 v);
 
 
 uint GetDepthSliceIdx(float ViewZ)
@@ -324,13 +342,6 @@ inline float ShadowPCF2D(Texture2D DepthTex, SamplerComparisonState Comp, float2
     return sum / 9.0f;
 }
 
-// 2D simple binary compare (no PCF)
-inline float ShadowBinary2D(Texture2D DepthTex, SamplerState Samp, float2 uv, float currentDepth)
-{
-    float sd = DepthTex.SampleLevel(Samp, uv, 0).r;
-    return (currentDepth <= sd) ? 1.0f : 0.0f;
-}
-
 // 2D VSM from moments texture
 inline float ShadowVSM2D(Texture2D MomentsTex, SamplerState Samp, float2 uv, float currentDepth, float mipBias)
 {
@@ -472,7 +483,7 @@ float SampleShadowCSM(float3 worldPos, float viewDepth)
     // float ShadowMapDepth = CascadedShadowMapTexture.Sample(SamplerWrap, float3(ShadowUV, CascadeIndex)).r;
     // Shadow = (CurrentDepth - ShadowBias) > ShadowMapDepth ? 0.0f : 1.0f;
         
-    float bias = ShadowParams.x;
+    float bias = Directional.Bias;
     
     if (bUsePCF)
     {
@@ -541,7 +552,7 @@ float PSM_Visibility(float3 worldPos)
     // 경계 밖이면 취향에 따라 1(밝게) 또는 0(그림자) 처리. 보통 1이 안전.
     if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
     
-    /*
+/*
 pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “식별자 이름” 문제. HLSL(특히 FX 문법 인식)에서 pass는 예약어로 취급되는 경우가 있어서 변수 이름으로 쓰면 파서가 에러
 우연찮게 vs로 한번보자는 생각이들어서 봤었는데, vs는 여기에 빨간줄 뜨더라.. 갓 vs..
 이거 때문에 3시간 날렸다.. 찾기도 어려운 HLSL 조심 또 조심....
@@ -568,11 +579,12 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
     {
         // Classic depth compare
-        return ShadowBinary2D(ShadowMapTexture, SamplerWrap, ShadowUV, CurrentDepth - ShadowParams[0]);
+        float sd = ShadowMapTexture.SampleLevel(SamplerWrap, ShadowUV, 0).r;
+        return (CurrentDepth - Directional.Bias <= sd) ? 1.0f : 0.0f;
     }
     else if (bUsePCF != 0)
     {
-        return ShadowPCF2D(ShadowMapTexture, SamplerPCF, ShadowUV, CurrentDepth - ShadowParams[0]);
+        return ShadowPCF2D(ShadowMapTexture, SamplerPCF, ShadowUV, CurrentDepth - Directional.Bias);
     }
     else if (bUseVSM != 0)
     {
@@ -582,14 +594,71 @@ pass를 변수명으로 쓰지 말자 bool lit 을 bool pass로 썼었다: “�
     return 1.0f;
 }
 
-// 기존 코드가 호출하는 CalculateShadowFactor를 PSM으로 매핑
-inline float CalculateShadowFactor(float3 WorldPosition)
+// Variant that applies slope-scaled bias using world normal
+float PSM_Visibility_WithNormal(float3 worldPos, float3 worldNormal)
+{
+    // Compute base values as in PSM_Visibility
+    float ViewDepth = mul(float4(worldPos, 1.0f), View).z;
+    float4 sh;
+    if (bUsePSM == 1) {
+        float4 eyeClip = mul(mul(float4(worldPos, 1.0), EyeView), EyeProj);
+        float3 ndc = eyeClip.xyz / max(eyeClip.w, 1e-8f);
+        sh = mul(mul(float4(ndc, 1.0), LightViewP[0]), LightProjP[0]);
+    } else {
+        sh = mul(mul(float4(worldPos, 1.0), LightViewP[0]), LightProjP[0]);
+    }
+    float2 uv; uv.x = sh.x / sh.w * 0.5 + 0.5; uv.y = 0.5 - sh.y / sh.w * 0.5;
+    float z = sh.z / sh.w;
+    if (any(uv < 0.0) || any(uv > 1.0)) return 1.0;
+
+    float4 LightSpacePos = mul(float4(worldPos, 1.0f), LightViewP[0]);
+    LightSpacePos = mul(LightSpacePos, LightProjP[0]);
+    LightSpacePos.xyz /= LightSpacePos.w;
+    float2 ShadowUV = LightSpacePos.xy * 0.5f + 0.5f;
+    ShadowUV.y = 1.0f - ShadowUV.y;
+    if (ShadowUV.x < 0.0f || ShadowUV.x > 1.0f || ShadowUV.y < 0.0f || ShadowUV.y > 1.0f)
+        return 1.0f;
+
+    float CurrentDepth = LightSpacePos.z;
+
+    // Slope-scaled bias term
+    float3 Ldir = SafeNormalize3(LightDirWS);
+    float ndotl_abs = abs(dot(worldNormal, Ldir));
+    float combinedBias = Directional.Bias + Directional.SlopeBias * (1.0f - ndotl_abs);
+
+    if (bUseCSM != 0)
+    {
+        return SampleShadowCSM(worldPos, ViewDepth);
+    }
+    else if (((bUseVSM == 0) && (bUsePCF == 0)) || ((bUseVSM != 0) && (bUsePCF != 0)))
+    {
+        float sd = ShadowMapTexture.SampleLevel(SamplerWrap, ShadowUV, 0).r;
+        return (CurrentDepth - combinedBias <= sd) ? 1.0f : 0.0f;
+    }
+    else if (bUsePCF != 0)
+    {
+        return ShadowPCF2D(ShadowMapTexture, SamplerPCF, ShadowUV, CurrentDepth - combinedBias);
+    }
+    else if (bUseVSM != 0)
+    {
+        static const float VSM_MipBias = 1.25f;
+        return ShadowVSM2D(ShadowMapTexture, SamplerLinearClamp, ShadowUV, CurrentDepth - combinedBias, VSM_MipBias);
+    }
+    return 1.0f;
+}
+
+// Maintain original helper (no normal) and a normal-aware variant
+inline float CalculateDirectionalShadowFactor(float3 WorldPosition)
 {
     return PSM_Visibility(WorldPosition);
 }
+inline float CalculateDirectionalShadowFactorWithNormal(float3 WorldPosition, float3 WorldNormal)
+{
+    return PSM_Visibility_WithNormal(WorldPosition, WorldNormal);
+}
 
 // Compute spotlight shadow factor from single-spot constants (b7/t12)
-float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
+float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos, float3 worldNormal)
 {
     // Fetch per-spot view/proj and atlas transform
     FSpotShadowAtlasEntry entry = SpotShadowAtlasEntries[spotIndex];
@@ -631,8 +700,11 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
 
     float currentDepth = saturate(clip.z * invW);
     
-    // Use proper bias value (matching directional light)
-    float bias = 0.00005f;  // Shadow acne 방지
+    // Slope-scaled bias: base + slopeScale * (1 - |N·L|)
+    FSpotLightInfo spotInfo = SpotLightInfos[spotIndex];
+    float3 L = SafeNormalize3(spotInfo.Position - worldPos);
+    float ndotl_abs = abs(dot(worldNormal, L));
+    float bias = spotInfo.Bias + spotInfo.SlopeBias * (1.0f - ndotl_abs);
 
     // PCF path (3x3) using hardware comparison sampler
     if (bUsePCF != 0)
@@ -653,7 +725,7 @@ float CalculateSpotShadowFactorIndexed(uint spotIndex, float3 worldPos)
 }
 
 // Compute point light shadow factor from cube array (no PCF/VSM, no bias)
-float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, float3 worldPos)
+float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, float3 worldPos, float3 worldNormal)
 {
     // Map global point light index to cube array index; 0xFFFFFFFF means not shadowed
     uint cubeIdx = PointShadowCubeIndices[pointIndex];
@@ -698,24 +770,28 @@ float CalculatePointShadowFactorIndexed(uint pointIndex, FPointLightInfo info, f
     float D = -zn * zf / (zf - zn);
     float currentDepth = C + D / z_eye;
 
+    // slope-scaled bias for point lights as well
+    float3 Lp = SafeNormalize3(info.Position - worldPos);
+    float bias = info.Bias + info.SlopeBias * (1.0f - abs(dot(worldNormal, Lp)));
+
     // VSM path over moments 2D array
     if (bUseVSM != 0)
     {
         uint layer = cubeIdx * 6 + (uint)faceIndex;
         static const float VSM_MipBias = 0.0f;
-        return ShadowVSM2DArray(PointShadowMoments2DArray, SamplerLinearClamp, float3(uv, layer), currentDepth, VSM_MipBias);
+        return ShadowVSM2DArray(PointShadowMoments2DArray, SamplerLinearClamp, float3(uv, layer), currentDepth - bias, VSM_MipBias);
     }
 
     // PCF path over 2D array SRV (uses hardware comparison sampler)
     if (bUsePCF != 0)
     {
         uint layer = cubeIdx * 6 + (uint)faceIndex;
-        return ShadowPCF2DArray(PointShadow2DArray, SamplerPCF, float3(uv, layer), currentDepth);
+        return ShadowPCF2DArray(PointShadow2DArray, SamplerPCF, float3(uv, layer), currentDepth - bias);
     }
 
     // Default: binary compare from cube SRV
     float sd = PointShadowCubes.SampleLevel(SamplerWrap, float4(dir, cubeIdx), 0).r;
-    return (currentDepth - 0.0001f <= sd) ? 1.0f : 0.0f;
+    return (currentDepth - bias <= sd) ? 1.0f : 0.0f;
 }
 
 // Safe Normalize Util Functions
@@ -1012,7 +1088,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
     //finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + Input.DiffuseLight.rgb * diffuseColor.rgb + Input.SpecularLight.rgb * specularColor.rgb;
 
     // Shadow Map 적용 (Pixel Shader에서 그림자 계산)
-    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    float ShadowFactor = CalculateDirectionalShadowFactorWithNormal(Input.WorldPosition, N);
     float3 shadedDiffuse = Input.DiffuseLight.rgb * ShadowFactor;
     float3 shadedSpecular = Input.SpecularLight.rgb * ShadowFactor;
     finalPixel.rgb = Input.AmbientLight.rgb * ambientColor.rgb + shadedDiffuse * diffuseColor.rgb + shadedSpecular * specularColor.rgb;
@@ -1028,7 +1104,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
 
     //ADD_ILLUM(Illumination, CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation));
     // 2. Directional Light (Shadow Map 적용)
-    float ShadowFactor = CalculateShadowFactor(Input.WorldPosition);
+    float ShadowFactor = CalculateDirectionalShadowFactorWithNormal(Input.WorldPosition, N);
     //float ShadowFactor = 1.0;  // 강제 밝게
     FIllumination DirectionalIllum = CalculateDirectionalLight(Directional, N, Input.WorldPosition, ViewWorldLocation);
     DirectionalIllum.Diffuse *= ShadowFactor;
@@ -1045,7 +1121,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
         uint PointIndex = PointLightIndices[LightIndicesOffset + i];
         FPointLightInfo PointLight = PointLightInfos[PointIndex];
         FIllumination P = CalculatePointLight(PointLight, N, Input.WorldPosition, ViewWorldLocation);
-        float pf = CalculatePointShadowFactorIndexed(PointIndex, PointLight, Input.WorldPosition);
+        float pf = CalculatePointShadowFactorIndexed(PointIndex, PointLight, Input.WorldPosition, N);
         P.Diffuse *= pf;
         P.Specular *= pf;
         ADD_ILLUM(Illumination, P);
@@ -1060,7 +1136,7 @@ PS_OUTPUT Uber_PS(PS_INPUT Input)
         FSpotLightInfo SpotLight = SpotLightInfos[SpotIndex];
         FIllumination S = CalculateSpotLight(SpotLight, N, Input.WorldPosition, ViewWorldLocation);
         
-        float sf = CalculateSpotShadowFactorIndexed(SpotIndex, Input.WorldPosition);
+        float sf = CalculateSpotShadowFactorIndexed(SpotIndex, Input.WorldPosition, N);
         S.Diffuse *= sf;
         S.Specular *= sf;
         ADD_ILLUM(Illumination, S);
