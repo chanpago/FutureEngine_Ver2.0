@@ -279,7 +279,7 @@ void UPointLightComponentWidget::RenderWidget()
 
         // Shadow Slope Bias
         float ShadowSlopeBias = PointLightComponent->GetShadowSlopeBias();
-        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 0.2f, "%.2f"))
+        if (ImGui::DragFloat("Shadow Slope Bias", &ShadowSlopeBias, 0.1f, 0.0f, 0.01f, "%.4f"))
         {
             PointLightComponent->SetShadowSlopeBias(ShadowSlopeBias);
         }

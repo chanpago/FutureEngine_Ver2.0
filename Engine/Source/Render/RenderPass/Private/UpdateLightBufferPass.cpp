@@ -228,10 +228,10 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
         }
     }
 
-    UE_LOG("Point Light Shadow Tier Classification:");
-    UE_LOG("  Low  Tier (512):  %d lights", Tiers[0].Lights.size());
-    UE_LOG("  Mid  Tier (1024): %d lights", Tiers[1].Lights.size());
-    UE_LOG("  High Tier (2048): %d lights", Tiers[2].Lights.size());
+    // UE_LOG("Point Light Shadow Tier Classification:");
+    // UE_LOG("  Low  Tier (512):  %d lights", Tiers[0].Lights.size());
+    // UE_LOG("  Mid  Tier (1024): %d lights", Tiers[1].Lights.size());
+    // UE_LOG("  High Tier (2048): %d lights", Tiers[2].Lights.size());
 
     // Prepare tier mapping: global point light index -> (tier, tier-local-index)
     TArray<FPointShadowTierMapping> TierMapping;
@@ -293,8 +293,8 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
         TierGroup& tier = Tiers[tierIndex];
         if (tier.Lights.empty()) continue;
 
-        UE_LOG("Baking %s Tier (%dx%d) with %d lights...",
-            tier.Name, tier.Resolution, tier.Resolution, tier.Lights.size());
+        // UE_LOG("Baking %s Tier (%dx%d) with %d lights...",
+            // tier.Name, tier.Resolution, tier.Resolution, tier.Lights.size());
 
         // Setup viewport for this tier
         D3D11_VIEWPORT vp = {};
@@ -436,7 +436,7 @@ void FUpdateLightBufferPass::BakePointShadowMap(FRenderingContext& Context)
     DeviceContext->RSSetViewports(1, &OriginalViewport);
     DeviceContext->OMSetRenderTargets(1, &OriginalRTVs, OriginalDSV);
 
-    UE_LOG("Point Light Shadow Map Baking Complete (3-Tier System)");
+    // UE_LOG("Point Light Shadow Map Baking Complete (3-Tier System)");
 }
 
 bool FUpdateLightBufferPass::GetPointCubeIndexCPU(const UPointLightComponent* Comp, uint32& OutCubeIdx) const
@@ -495,7 +495,7 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
         }
     }
     const int32 NumSpotLights = static_cast<int32>(FilteredSpots.size());
-    UE_LOG("BakeSpotShadowMap: NumSpotLights = %d (3-Tier System)", NumSpotLights);
+    // UE_LOG("BakeSpotShadowMap: NumSpotLights = %d (3-Tier System)", NumSpotLights);
 
     // Classify lights into tiers based on ShadowResolutionScale
     struct FSpotLightTierInfo
@@ -541,8 +541,8 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
         TierClassified[tier].push_back(info);
     }
 
-    UE_LOG("Spot Shadow Tier Distribution: Low=%d, Mid=%d, High=%d",
-           TierClassified[0].size(), TierClassified[1].size(), TierClassified[2].size());
+    // UE_LOG("Spot Shadow Tier Distribution: Low=%d, Mid=%d, High=%d",
+    //        TierClassified[0].size(), TierClassified[1].size(), TierClassified[2].size());
     
     if (NumSpotLights > 0)
     {
@@ -613,7 +613,7 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
             const float tileW = static_cast<float>(tileSize);
             const float tileH = static_cast<float>(tileSize);
 
-            UE_LOG("Rendering Spot Shadow Tier %s: %d lights at %dx%d", tierName, TierLights.size(), tileSize, tileSize);
+            // UE_LOG("Rendering Spot Shadow Tier %s: %d lights at %dx%d", tierName, TierLights.size(), tileSize, tileSize);
 
             // Render each light in this tier
             for (const auto& TierInfo : TierLights)
@@ -632,7 +632,7 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
                 if (SpotCaster->GetCastShadows())
                 {
                     // === PSM Path (Experimental - Camera Dependent!) ===
-                    UE_LOG("SpotLight[%d] using PSM (Warning: Camera dependent!)", globalIdx);
+                    // UE_LOG("SpotLight[%d] using PSM (Warning: Camera dependent!)", globalIdx);
                     UCamera* MainCamera = Context.CurrentCamera;
                     if (!MainCamera) continue;
 
@@ -650,12 +650,12 @@ void FUpdateLightBufferPass::BakeSpotShadowMap(FRenderingContext& Context)
                 else
                 {
                     // === Standard Path (LVP) ===
-                    UE_LOG("SpotLight[%d] using Standard Shadow (Camera Independent)", globalIdx);
+                    // UE_LOG("SpotLight[%d] using Standard Shadow (Camera Independent)", globalIdx);
                     // Compute view matrix from light basis
                     const FVector eye = SpotCaster->GetWorldLocation();
                     const FVector fwd = SpotCaster->GetForwardVector().GetNormalized();
-                    UE_LOG("  Light Pos=(%.2f, %.2f, %.2f), Fwd=(%.2f, %.2f, %.2f)",
-                        eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
+                    // UE_LOG("  Light Pos=(%.2f, %.2f, %.2f), Fwd=(%.2f, %.2f, %.2f)",
+                    //     eye.X, eye.Y, eye.Z, fwd.X, fwd.Y, fwd.Z);
                     const FVector tmpUp = (fabsf(fwd.Z) > 0.99f) ? FVector(1,0,0) : FVector(0,0,1);
                     const FVector right = tmpUp.Cross(fwd).GetNormalized();
                     const FVector up = fwd.Cross(right);
@@ -1539,7 +1539,7 @@ void FUpdateLightBufferPass::CalculateShadowMatrices(EShadowProjectionType ProjT
         }
         
         // LiSPSM Path
-        UE_LOG("DirectionalLight using LiSPSM");
+        // UE_LOG("DirectionalLight using LiSPSM");
         
         FMatrix V, P, PSMMatrix = FMatrix::Identity();
         // LiSPSM requires light direction as "surface -> light" (away from scene)
@@ -1873,8 +1873,8 @@ void FUpdateLightBufferPass::BuildSpotLightPSM(const FMatrix& EyeView, const FMa
     
     float distToCamera = cameraLightViewPos.Length();
     
-    UE_LOG("︠ PSM Camera in Light Space: (%.2f, %.2f, %.2f), dist=%.2f",
-        cameraLightViewPos.X, cameraLightViewPos.Y, cameraLightViewPos.Z, distToCamera);
+    // UE_LOG("︠ PSM Camera in Light Space: (%.2f, %.2f, %.2f), dist=%.2f",
+        // cameraLightViewPos.X, cameraLightViewPos.Y, cameraLightViewPos.Z, distToCamera);
     
     // WarpPSM: Light View Space를 카메라 방향 기준으로 회전한 후 원근 투영
     // 1) 카메라 방향으로 좌표계 회전 (부영한 경우 생략)
@@ -1953,8 +1953,8 @@ void FUpdateLightBufferPass::BuildSpotLightPSM(const FMatrix& EyeView, const FMa
         }
     }
     
-    UE_LOG("  PSM Warped Frustum NDC: min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f)",
-        minWarped.X, minWarped.Y, minWarped.Z, maxWarped.X, maxWarped.Y, maxWarped.Z);
+    // UE_LOG("  PSM Warped Frustum NDC: min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f)",
+        // minWarped.X, minWarped.Y, minWarped.Z, maxWarped.X, maxWarped.Y, maxWarped.Z);
     
     // === 5. Crop Matrix (Warped Space에서 tight fitting) ===
     float centerX = (minWarped.X + maxWarped.X) * 0.5f;
@@ -2189,12 +2189,12 @@ void FUpdateLightBufferPass::BuildDirectionalLightLiSPSM(
     FMatrix eyeToLightClip = lightSpaceBasis * lsTranslate * lsPerspective * clipMatrix;
     OutPSMMatrix = eyeToLightClip;  // Used for shading (CameraClipToLightClip)
     
-    UE_LOG("︠ LiSPSM: cosg=%.3f sing=%.3f Nopt=%.2f maxx=%.3f maxy=%.3f maxz=%.2f",
-        cosg, sing, Nopt, maxx, maxy, maxz);
-    UE_LOG("︠ LiSPSM NDC bounds: X[%.2f,%.2f] Y[%.2f,%.2f]",
-        minNDC.X, maxNDC.X, minNDC.Y, maxNDC.Y);
-    UE_LOG("︠ LiSPSM LightSpace bounds: X[%.2f,%.2f] Y[%.2f,%.2f] Z[%.2f,%.2f]",
-        lsMin.X, lsMax.X, lsMin.Y, lsMax.Y, lsMin.Z, lsMax.Z);
+    // UE_LOG("︠ LiSPSM: cosg=%.3f sing=%.3f Nopt=%.2f maxx=%.3f maxy=%.3f maxz=%.2f",
+    //     cosg, sing, Nopt, maxx, maxy, maxz);
+    // UE_LOG("︠ LiSPSM NDC bounds: X[%.2f,%.2f] Y[%.2f,%.2f]",
+    //     minNDC.X, maxNDC.X, minNDC.Y, maxNDC.Y);
+    // UE_LOG("︠ LiSPSM LightSpace bounds: X[%.2f,%.2f] Y[%.2f,%.2f] Z[%.2f,%.2f]",
+    //     lsMin.X, lsMax.X, lsMin.Y, lsMax.Y, lsMin.Z, lsMax.Z);
 }
 
 void FUpdateLightBufferPass::Release()

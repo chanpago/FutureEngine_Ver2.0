@@ -103,7 +103,7 @@ protected:
     /** Shadow depth bias to reduce shadow acne */
     float ShadowBias = 0.001f;
     /** Shadow slope bias (used with PSM) */
-    float ShadowSlopeBias = 0.1f;
+    float ShadowSlopeBias = 0.001f;
     /** Shadow edge sharpening factor */
     float ShadowSharpen = 0.0f;
 private:
